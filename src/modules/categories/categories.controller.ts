@@ -5,38 +5,61 @@ import { PrismaService } from '../../database/prisma.service';
 export class CategoriesController {
   constructor(private readonly prisma: PrismaService) {}
 
-  @Get()
-  async getCategories(
-    @Query('lang') lang = 'en',
-    @Query('search') search?: string,
-    @Query('q') q?: string,
-  ) {
-    const targetLang = (lang || 'en').toLowerCase().trim();
-    const searchTerm = (search || q || '').trim();
+  // 1. Devotional Services & Categories Endpoint (Direct from MySQL with server-side search)
+  @Get('services')
+  async getCategoryServices(@Query('search') search?: string) {
+    const where: any = { isActive: true };
 
-    const whereClause: any = {
+    if (search && search.trim() !== '') {
+      const q = search.trim();
+      where.OR = [
+        { title: { contains: q } },
+        { sub: { contains: q } },
+        { serviceId: { contains: q } },
+      ];
+    }
+
+    const items = await this.prisma.categoryService.findMany({
+      where,
+      orderBy: { displayOrder: 'asc' },
+    });
+
+    return {
+      success: true,
+      data: items.map((item) => ({
+        id: item.serviceId,
+        serviceId: item.serviceId,
+        title: item.title,
+        sub: item.sub || '',
+        icon: item.icon,
+        url: item.url,
+        image: item.image || '',
+        artwork: item.artwork || '',
+        displayOrder: item.displayOrder,
+      })),
+      count: items.length,
+    };
+  }
+
+  @Get()
+  async getCategories(@Query('lang') lang = 'en', @Query('search') search?: string) {
+    const targetLang = (lang || 'en').toLowerCase().trim();
+    const where: any = { 
       parentId: null,
-      isArchived: false,
+      isArchived: false
     };
 
-    if (searchTerm) {
-      whereClause.OR = [
-        { slug: { contains: searchTerm } },
-        {
-          translations: {
-            some: {
-              OR: [
-                { title: { contains: searchTerm } },
-                { description: { contains: searchTerm } },
-              ],
-            },
-          },
-        },
+    if (search && search.trim() !== '') {
+      const q = search.trim();
+      where.OR = [
+        { slug: { contains: q } },
+        { translations: { some: { title: { contains: q } } } },
+        { translations: { some: { description: { contains: q } } } },
       ];
     }
 
     const categories = await this.prisma.contentCategory.findMany({
-      where: whereClause,
+      where,
       orderBy: { displayOrder: 'asc' },
       include: {
         translations: {

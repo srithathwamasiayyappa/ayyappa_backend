@@ -11,7 +11,7 @@ import { ContactModule } from './modules/contact/contact.module';
 import { SplashModule } from './modules/splash/splash.module';
 import { MasterModule } from './modules/master/master.module';
 import { UsersModule } from './modules/users/users.module';
-import { TemplesModule } from './modules/temples/temples.module';
+import { DharmaKarthaModule } from './modules/dharma-kartha/dharma-kartha.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
@@ -28,7 +28,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     SplashModule,
     MasterModule,
     UsersModule,
-    TemplesModule,
+    DharmaKarthaModule,
     NotificationsModule,
   ],
 })

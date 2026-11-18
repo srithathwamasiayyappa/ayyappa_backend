@@ -3,103 +3,125 @@ import {
   Get,
   Patch,
   Post,
+  Delete,
   Param,
   Query,
   Headers,
 } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 
+/**
+ * ===================================================================================
+ * SINGLE UNIFIED ROLE-BASED NOTIFICATIONS CONTROLLER
+ * Route: /api/v1/notifications
+ * 
+ * Supports:
+ *   - role=CUSTOMER (Devotee: Panchangam, vratham reminders, pooja updates)
+ *   - role=DHARMA_KARTHA (Trustee: Temple claim approvals, festivals, admin alerts)
+ * 
+ * STRICT AUTHENTICATION:
+ *   Without login, strictly returns 401 Unauthorized.
+ * ===================================================================================
+ */
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(private readonly notifService: NotificationsService) {}
 
   /**
-   * 1. Fetch Notifications (GET)
-   * GET /api/v1/notifications?role=CUSTOMER&page=1&limit=20
+   * 1. GET /api/v1/notifications
+   * Role-based notification list.
+   * Query params:
+   *   - role: 'CUSTOMER' | 'DHARMA_KARTHA' (Optional, auto-detected from account if omitted)
+   *   - page: number (default: 1)
+   *   - limit: number (default: 20)
+   *   - category / type: string (filter by category)
+   *   - unreadOnly: boolean (true to filter unread)
+   *   - search: string (search keyword)
+   * 
+   * STRICT: Without login, throws 401 Unauthorized.
    */
   @Get()
   async getNotifications(
-    @Query('role') role?: 'CUSTOMER' | 'DHARMA_KARTHA',
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-    @Query('category') category?: string,
-    @Query('unreadOnly') unreadOnly?: string,
-    @Query('search') search?: string,
-    @Headers('x-user-id') userIdHeader?: string,
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
   ) {
-    const userId = userIdHeader ? parseInt(userIdHeader, 10) : undefined;
-    const isUnreadOnly = unreadOnly === 'true' || unreadOnly === '1';
-
-    return this.notificationsService.getNotifications({
-      role: role || 'CUSTOMER',
-      userId: !isNaN(userId as number) ? userId : undefined,
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
-      category,
-      unreadOnly: isUnreadOnly,
-      search,
-    });
+    const { userId, role } = await this.notifService.resolveUserAndRole(headers, query);
+    return this.notifService.getNotificationsByRole(userId, role, query);
   }
 
   /**
-   * 2. Get Unread Count (GET)
-   * GET /api/v1/notifications/unread-count?role=CUSTOMER
+   * 2. GET /api/v1/notifications/unread-count
+   * Role-based unread notification count badge.
+   * Query params:
+   *   - role: 'CUSTOMER' | 'DHARMA_KARTHA'
+   * 
+   * STRICT: Without login, throws 401 Unauthorized.
    */
   @Get('unread-count')
   async getUnreadCount(
-    @Query('role') role?: 'CUSTOMER' | 'DHARMA_KARTHA',
-    @Headers('x-user-id') userIdHeader?: string,
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
   ) {
-    const userId = userIdHeader ? parseInt(userIdHeader, 10) : undefined;
-    return this.notificationsService.getUnreadCount(
-      role || 'CUSTOMER',
-      !isNaN(userId as number) ? userId : undefined,
-    );
+    const { userId, role } = await this.notifService.resolveUserAndRole(headers, query);
+    return this.notifService.getUnreadCountByRole(userId, role);
   }
 
   /**
-   * 3. Mark Single Notification as Read (PATCH)
-   * PATCH /api/v1/notifications/:id/read?role=CUSTOMER
+   * 3. PATCH /api/v1/notifications/:id/read
+   * Mark single notification as read.
+   * 
+   * STRICT: Without login, throws 401 Unauthorized.
    */
   @Patch(':id/read')
-  async markAsRead(
+  async markRead(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
     @Param('id') id: string,
-    @Query('role') role?: 'CUSTOMER' | 'DHARMA_KARTHA',
-    @Headers('x-user-id') userIdHeader?: string,
   ) {
-    const userId = userIdHeader ? parseInt(userIdHeader, 10) : undefined;
-    return this.notificationsService.markAsRead(
-      parseInt(id, 10),
-      role || 'CUSTOMER',
-      !isNaN(userId as number) ? userId : undefined,
-    );
+    const { userId, role } = await this.notifService.resolveUserAndRole(headers, query);
+    return this.notifService.markReadByRole(userId, parseInt(id, 10), role);
   }
 
   /**
-   * 4. Mark All Notifications as Read (PATCH / POST)
-   * PATCH /api/v1/notifications/mark-all-read?role=CUSTOMER
+   * 4. PATCH /api/v1/notifications/mark-all-read
+   * Mark all notifications as read for the user's role.
+   * 
+   * STRICT: Without login, throws 401 Unauthorized.
    */
   @Patch('mark-all-read')
-  async markAllAsReadPatch(
-    @Query('role') role?: 'CUSTOMER' | 'DHARMA_KARTHA',
-    @Headers('x-user-id') userIdHeader?: string,
+  async markAllRead(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
   ) {
-    const userId = userIdHeader ? parseInt(userIdHeader, 10) : undefined;
-    return this.notificationsService.markAllAsRead(
-      role || 'CUSTOMER',
-      !isNaN(userId as number) ? userId : undefined,
-    );
+    const { userId, role } = await this.notifService.resolveUserAndRole(headers, query);
+    return this.notifService.markAllReadByRole(userId, role);
   }
 
-  @Post('mark-all-read')
-  async markAllAsReadPost(
-    @Query('role') role?: 'CUSTOMER' | 'DHARMA_KARTHA',
-    @Headers('x-user-id') userIdHeader?: string,
+  /**
+   * 4b. POST /api/v1/notifications/read-all (Alias for mark-all-read)
+   * STRICT: Without login, throws 401 Unauthorized.
+   */
+  @Post('read-all')
+  async readAll(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
   ) {
-    const userId = userIdHeader ? parseInt(userIdHeader, 10) : undefined;
-    return this.notificationsService.markAllAsRead(
-      role || 'CUSTOMER',
-      !isNaN(userId as number) ? userId : undefined,
-    );
+    const { userId, role } = await this.notifService.resolveUserAndRole(headers, query);
+    return this.notifService.markAllReadByRole(userId, role);
+  }
+
+  /**
+   * 5. DELETE /api/v1/notifications/:id
+   * Delete single notification.
+   * STRICT: Without login, throws 401 Unauthorized.
+   */
+  @Delete(':id')
+  async deleteNotification(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
+    @Param('id') id: string,
+  ) {
+    const { userId } = await this.notifService.resolveUserAndRole(headers, query);
+    return this.notifService.deleteCustomerNotification(userId, parseInt(id, 10));
   }
 }

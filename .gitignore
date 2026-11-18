@@ -15,6 +15,8 @@ dist/
 *.rar
 backup_ayyappa_audit.json
 mysql_full_consistent_backup.json
+mariadb_data/
+
 
 # User Uploaded media files
 uploads/*

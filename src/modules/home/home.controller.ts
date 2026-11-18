@@ -28,165 +28,219 @@ export class HomeController {
     return { text: '🕉️ స్వామియే శరణం అయ్యప్ప — శ్రీ అయ్యప్ప స్వామి నిత్య పూజా విధానం, అష్టోత్తరం, హరివరాసనం మరియు సమగ్ర శబరిమల యాత్రా దర్శిని 🕉️' };
   }
 
-  // Official Application Branding, Logo & Devotional Identity
+  // Public App Logo & Brand Identity Endpoint for Website, Admin, and Mobile Apps
   @Get('logo')
-  async getHomeLogo() {
-    // 1. Try finding dynamically configured logo & branding in app_settings table
-    const setting = await this.prisma.appSetting.findUnique({
-      where: { key: 'app_home_logo' },
+  async getAppLogo() {
+    const settings = await this.prisma.appSetting.findMany({
+      where: {
+        key: {
+          in: [
+            'app_logo',
+            'app_title',
+            'app_tagline',
+            'app_description',
+            'theme_primary_color',
+            'theme_secondary_color',
+            'app_play_store_url',
+            'app_app_store_url',
+            'app_store_subtext',
+            'app_footer_desc',
+            'social_youtube_url',
+            'social_telegram_url',
+            'social_instagram_url',
+            'social_facebook_url',
+            'social_whatsapp_url'
+          ]
+        }
+      }
     });
+
+    const settingsMap: Record<string, string> = {};
+    settings.forEach(s => {
+      settingsMap[s.key] = s.value;
+    });
+
+    const rawLogo = settingsMap['app_logo'];
+    const logoUrl = rawLogo
+      ? (rawLogo.startsWith('http://') || rawLogo.startsWith('https://') || rawLogo.startsWith('data:')
+          ? rawLogo
+          : `https://backendapis.saranamayyappa.in${rawLogo.startsWith('/') ? '' : '/'}${rawLogo}`)
+      : '/images/saranam-ayyappa-official-emblem.jpg';
+    return {
+      success: true,
+      logoUrl,
+      title: settingsMap['app_title'] || 'Saranam Ayyappa',
+      appName: `${settingsMap['app_title'] || 'Saranam Ayyappa'} App`,
+      tagline: settingsMap['app_tagline'] || 'Connect.. Pray.. Serve..',
+      description: settingsMap['app_description'] || 'A sacred digital sanctuary and comprehensive devotional guide for Lord Ayyappa devotees and Dharma Karthas worldwide.',
+      primaryColor: settingsMap['theme_primary_color'] || '#06452E',
+      secondaryColor: settingsMap['theme_secondary_color'] || '#CAA049',
+      playStoreUrl: settingsMap['app_play_store_url'] || 'https://play.google.com/store/apps/details?id=com.saranamayyappa.app',
+      appStoreUrl: settingsMap['app_app_store_url'] || 'https://apps.apple.com/app/saranam-ayyappa/id123456789',
+      storeSubtext: settingsMap['app_store_subtext'] || 'Available on iOS & Android',
+      footerAppDesc: settingsMap['app_footer_desc'] || 'Experience daily darshan, audio bhajans, Panchangam alerts & sacred pooja vidhanam on your mobile.',
+      socialLinks: {
+        youtube: settingsMap['social_youtube_url'] || 'https://www.youtube.com/@SaranamAyyappaOfficial',
+        telegram: settingsMap['social_telegram_url'] || 'https://t.me/saranam_ayyappa_satsang',
+        instagram: settingsMap['social_instagram_url'] || 'https://www.instagram.com/saranamayyappa_official',
+        facebook: settingsMap['social_facebook_url'] || 'https://www.facebook.com/saranamayyappaportal',
+        whatsapp: settingsMap['social_whatsapp_url'] || 'https://whatsapp.com/channel/saranamayyappa'
+      },
+      updatedAt: new Date()
+    };
+  }
+
+  // Dedicated App Download & Store Links Endpoint
+  @Get('app-links')
+  async getAppLinks() {
+    return this.getAppLogo();
+  }
+
+  // Public Devotional Social Media & Community Handles from DB
+  @Get('social-links')
+  async getSocialLinks() {
+    const settings = await this.prisma.appSetting.findMany({
+      where: {
+        key: {
+          in: [
+            'social_youtube_url',
+            'social_telegram_url',
+            'social_whatsapp_url',
+            'social_instagram_url',
+            'social_facebook_url',
+            'app_title',
+            'app_tagline'
+          ]
+        }
+      }
+    });
+
+    const map: Record<string, string> = {};
+    settings.forEach(s => {
+      map[s.key] = s.value;
+    });
+
+    const list: Array<{ id: string; name: string; title: string; url: string; icon: string; isShare?: boolean }> = [];
+
+    // 1. YouTube Channel
+    if (map['social_youtube_url']) {
+      list.push({
+        id: 'youtube',
+        name: 'YouTube',
+        title: 'YouTube Devotional Channel',
+        url: map['social_youtube_url'],
+        icon: 'Youtube'
+      });
+    }
+
+    // 2. Telegram Devotee Satsang
+    if (map['social_telegram_url']) {
+      list.push({
+        id: 'telegram',
+        name: 'Telegram',
+        title: 'Telegram Devotee Satsang',
+        url: map['social_telegram_url'],
+        icon: 'Send'
+      });
+    }
+
+    // 3. WhatsApp Channel
+    if (map['social_whatsapp_url']) {
+      list.push({
+        id: 'whatsapp',
+        name: 'WhatsApp',
+        title: 'WhatsApp Channel',
+        url: map['social_whatsapp_url'],
+        icon: 'MessageSquare'
+      });
+    }
+
+    // 4. Devotee Native Sharing Option
+    list.push({
+      id: 'share',
+      name: 'Share',
+      title: 'Share with Devotees',
+      url: '',
+      icon: 'Share2',
+      isShare: true
+    });
+
+    return {
+      success: true,
+      data: list,
+      links: {
+        youtube: map['social_youtube_url'] || '',
+        telegram: map['social_telegram_url'] || '',
+        whatsapp: map['social_whatsapp_url'] || '',
+        instagram: map['social_instagram_url'] || '',
+        facebook: map['social_facebook_url'] || ''
+      }
+    };
+  }
+
+  // Public Temple Types Endpoint for Website & Dharma Kartha Portals
+  @Get('temple-types')
+  async getTempleTypes() {
+    const setting = await this.prisma.appSetting.findUnique({
+      where: { key: 'temple_types' }
+    });
+
+    let types = [
+      { id: 'MAIN_TEMPLE', name: 'Main Temple', description: 'Primary sacred sanctum, principal deity shrine & historic maha kshetram' },
+      { id: 'SUB_TEMPLE', name: 'Sub Temple', description: 'Affiliated shrines, upalayam, sub-sanctums within compound or surrounding jurisdiction' },
+      { id: 'MULTI_TEMPLE', name: 'Multi Temple (Trust / Complex)', description: 'Integrated religious cluster, temple complex with multiple shrines managed under one trust' },
+      { id: 'COMMUNITY_TEMPLE', name: 'Community / Village Mandir', description: 'Devotee-run local samithi mandir or village shrine' },
+      { id: 'HERITAGE_SHRINE', name: 'Ancient Heritage Shrine', description: 'Historical or archaeological sacred site of pilgrimage importance' }
+    ];
 
     if (setting && setting.value) {
       try {
         const parsed = JSON.parse(setting.value);
-        return {
-          success: true,
-          logoUrl: parsed.logoUrl || '/images/saranam-ayyappa-logo-1794898267923.png',
-          title: parsed.title || 'Thathwamasi Ayyappa',
-          heroTitle: parsed.heroTitle || 'Thathwamasi Ayyappa',
-          heroGreetingTop: parsed.heroGreetingTop || 'Thathwamasi',
-          heroGreetingMid: parsed.heroGreetingMid || 'Ayyappa',
-          heroGreetingBot: parsed.heroGreetingBot || 'Swamy!',
-          tagline: parsed.tagline || 'Connect.. Pray.. Serve..',
-          description: parsed.description || 'A sacred digital sanctuary and comprehensive devotional guide for Lord Ayyappa devotees and Dharma Karthas worldwide.',
-          primaryColor: parsed.primaryColor || '#06452E',
-          secondaryColor: parsed.secondaryColor || '#CAA049',
-          playStoreUrl: parsed.playStoreUrl || 'https://play.google.com/store/apps/details?id=com.saranamayyappa.app',
-          appStoreUrl: parsed.appStoreUrl || 'https://apps.apple.com/app/saranam-ayyappa/id123456789',
-          socialLinks: parsed.socialLinks || {
-            youtube: 'https://www.youtube.com/@SaranamAyyappaOfficial',
-            telegram: 'https://t.me/saranam_ayyappa_satsang',
-            instagram: 'https://www.instagram.com/saranamayyappa_official',
-            facebook: 'https://www.facebook.com/saranamayyappaportal',
-            whatsapp: 'https://whatsapp.com/channel/saranamayyappa',
-          },
-          updatedAt: setting.updatedAt,
-        };
-      } catch {
-        // Fall through to default
-      }
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          types = parsed;
+        }
+      } catch {}
     }
 
-    // 2. Default production-approved devotional branding
     return {
       success: true,
-      logoUrl: '/images/saranam-ayyappa-logo-1794898267923.png',
-      title: 'Thathwamasi Ayyappa',
-      heroTitle: 'Thathwamasi Ayyappa',
-      heroGreetingTop: 'Thathwamasi',
-      heroGreetingMid: 'Ayyappa',
-      heroGreetingBot: 'Swamy!',
-      tagline: 'Connect.. Pray.. Serve..',
-      description: 'A sacred digital sanctuary and comprehensive devotional guide for Lord Ayyappa devotees and Dharma Karthas worldwide.',
-      primaryColor: '#06452E',
-      secondaryColor: '#CAA049',
-      playStoreUrl: 'https://play.google.com/store/apps/details?id=com.saranamayyappa.app',
-      appStoreUrl: 'https://apps.apple.com/app/saranam-ayyappa/id123456789',
-      socialLinks: {
-        youtube: 'https://www.youtube.com/@SaranamAyyappaOfficial',
-        telegram: 'https://t.me/saranam_ayyappa_satsang',
-        instagram: 'https://www.instagram.com/saranamayyappa_official',
-        facebook: 'https://www.facebook.com/saranamayyappaportal',
-        whatsapp: 'https://whatsapp.com/channel/saranamayyappa',
-      },
-      updatedAt: '2026-11-17T08:27:04.936Z',
+      data: types
     };
   }
 
-  // Home Page 10 Devotional Services / Categories (Stored and fetched from DB)
+  // Public Categories & Devotional Services Endpoint from DB
   @Get('services')
-  async getHomeServices(@Query('lang') lang = 'en') {
-    return this.fetchOrSeedHomeServices(lang);
-  }
+  async getDevotionalServices(@Query('search') search?: string) {
+    const where: any = { isActive: true };
 
-  @Get('categories')
-  async getHomeCategories(@Query('lang') lang = 'en') {
-    return this.fetchOrSeedHomeServices(lang);
-  }
-
-  // 5 Bottom Navigation Tabs (Stored and fetched from DB)
-  @Get('tabs')
-  async getBottomTabs(@Query('lang') lang = 'en') {
-    const targetLang = (lang || 'en').toLowerCase().trim();
-    const settingKey = `home_bottom_tabs_${targetLang}`;
-
-    // 1. Check if already stored in app_settings table in database
-    const existing = await this.prisma.appSetting.findUnique({
-      where: { key: settingKey },
-    });
-
-    if (existing && existing.value) {
-      try {
-        const parsed = JSON.parse(existing.value);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return { success: true, count: parsed.length, data: parsed };
-        }
-      } catch {}
+    if (search && search.trim() !== '') {
+      const q = search.trim();
+      where.OR = [
+        { title: { contains: q } },
+        { sub: { contains: q } },
+        { serviceId: { contains: q } },
+      ];
     }
 
-    // 2. Default localized bottom tabs matching reference image
-    const localizedTabs = BOTTOM_TABS_DICTIONARY[targetLang] || BOTTOM_TABS_DICTIONARY.en;
-
-    // 3. Persist into MySQL app_settings so it exists permanently in database
-    try {
-      await this.prisma.appSetting.upsert({
-        where: { key: settingKey },
-        update: { value: JSON.stringify(localizedTabs) },
-        create: {
-          key: settingKey,
-          value: JSON.stringify(localizedTabs),
-          description: `Home 5 Bottom Navigation Tabs (${targetLang.toUpperCase()})`,
-        },
-      });
-    } catch {}
+    const items = await this.prisma.categoryService.findMany({
+      where,
+      orderBy: { displayOrder: 'asc' },
+    });
 
     return {
       success: true,
-      count: localizedTabs.length,
-      data: localizedTabs,
-    };
-  }
-
-  private async fetchOrSeedHomeServices(lang: string) {
-    const targetLang = (lang || 'en').toLowerCase().trim();
-    const settingKey = `home_services_${targetLang}`;
-
-    // 1. Check if already stored in app_settings table in database
-    const existing = await this.prisma.appSetting.findUnique({
-      where: { key: settingKey },
-    });
-
-    if (existing && existing.value) {
-      try {
-        const parsed = JSON.parse(existing.value);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return { success: true, count: parsed.length, data: parsed };
-        }
-      } catch {}
-    }
-
-    // 2. Default localized dictionary matching the approved 10 services grid
-    const localizedServices = HOME_SERVICES_DICTIONARY[targetLang] || HOME_SERVICES_DICTIONARY.en;
-
-    // 3. Persist into MySQL app_settings so it exists permanently in database
-    try {
-      await this.prisma.appSetting.upsert({
-        where: { key: settingKey },
-        update: { value: JSON.stringify(localizedServices) },
-        create: {
-          key: settingKey,
-          value: JSON.stringify(localizedServices),
-          description: `Home 10 Devotional Services Grid (${targetLang.toUpperCase()})`,
-        },
-      });
-    } catch (e) {
-      // Safe fallback if concurrent upsert
-    }
-
-    return {
-      success: true,
-      count: localizedServices.length,
-      data: localizedServices,
+      data: items.map((item) => ({
+        id: item.serviceId,
+        serviceId: item.serviceId,
+        title: item.title,
+        sub: item.sub || '',
+        icon: item.icon,
+        url: item.url,
+        image: item.image || '',
+        artwork: item.artwork || '',
+        displayOrder: item.displayOrder,
+      })),
+      count: items.length,
     };
   }
 
@@ -222,7 +276,7 @@ export class HomeController {
   async getAllCms(@Query('lang') lang = 'te') {
     return this.prisma.appSetting.findMany({
       where: {
-        key: { in: ['about_us', 'terms_conditions', 'privacy_policy', 'refund_policy', 'sabarimala_guidelines'] }
+        key: { in: ['about_us', 'terms_conditions', 'privacy_policy', 'refund_policy', 'sabarimala_guidelines', 'contact_us'] }
       }
     });
   }
@@ -327,124 +381,26 @@ const CMS_DEFAULTS: Record<string, Record<string, { title: string; content: stri
       content: 'शरणम् अय्यप्पा दुनिया भर के भगवान अय्यप्पा स्वामी भक्तों के लिए समर्पित एक पावन आध्यात्मिक मंच है। दैनिक प्रामाणिक पंचांग, हरिवरासनम् ऑडियो, 18 पवित्र सीढ़ियों का मार्गदर्शन और 5 भाषाओं में संपूर्ण पूजा विधान उपलब्ध कराता है।',
     },
   },
-};
-
-const HOME_SERVICES_DICTIONARY: Record<string, Array<{ id: string; key: string; title: string; icon: string; displayOrder: number }>> = {
-  en: [
-    { id: 'pooja-vidhanam', key: 'poojaVidhanam', title: 'Pooja\nVidhanam', icon: 'pooja-vidhanam', displayOrder: 1 },
-    { id: 'astothrams', key: 'astothrams', title: 'Astothrams', icon: 'astothrams', displayOrder: 2 },
-    { id: 'slokas', key: 'slokas', title: 'Slokas', icon: 'slokas', displayOrder: 3 },
-    { id: 'bhajans', key: 'bhajans', title: 'Bhajans', icon: 'bhajans', displayOrder: 4 },
-    { id: 'harathis', key: 'harathis', title: 'Harathis\n& Songs', icon: 'harathis', displayOrder: 5 },
-    { id: 'live-streams', key: 'liveStreams', title: 'Live\nStreams', icon: 'live-streams', displayOrder: 6 },
-    { id: 'panchangam', key: 'panchangam', title: 'Panchangam', icon: 'panchangam', displayOrder: 7 },
-    { id: 'temples', key: 'temples', title: 'Temples\nin India', icon: 'temples', displayOrder: 8 },
-    { id: 'donations', key: 'donations', title: 'Donations', icon: 'donations', displayOrder: 9 },
-    { id: 'food-donation', key: 'foodDonation', title: 'Food\nDonation', icon: 'food-donation', displayOrder: 10 },
-  ],
-  te: [
-    { id: 'pooja-vidhanam', key: 'poojaVidhanam', title: 'పూజా\nవిధానం', icon: 'pooja-vidhanam', displayOrder: 1 },
-    { id: 'astothrams', key: 'astothrams', title: 'అష్టోత్తరాలు', icon: 'astothrams', displayOrder: 2 },
-    { id: 'slokas', key: 'slokas', title: 'శ్లోకాలు', icon: 'slokas', displayOrder: 3 },
-    { id: 'bhajans', key: 'bhajans', title: 'భజనలు', icon: 'bhajans', displayOrder: 4 },
-    { id: 'harathis', key: 'harathis', title: 'హారతులు\n& పాటలు', icon: 'harathis', displayOrder: 5 },
-    { id: 'live-streams', key: 'liveStreams', title: 'ప్రత్యక్ష\nప్రసారం', icon: 'live-streams', displayOrder: 6 },
-    { id: 'panchangam', key: 'panchangam', title: 'పంచాంగం', icon: 'panchangam', displayOrder: 7 },
-    { id: 'temples', key: 'temples', title: 'భారతీయ\nఆలయాలు', icon: 'temples', displayOrder: 8 },
-    { id: 'donations', key: 'donations', title: 'విరాళాలు', icon: 'donations', displayOrder: 9 },
-    { id: 'food-donation', key: 'foodDonation', title: 'అన్నదానం', icon: 'food-donation', displayOrder: 10 },
-  ],
-  kn: [
-    { id: 'pooja-vidhanam', key: 'poojaVidhanam', title: 'ಪೂಜಾ\nವಿಧಾನ', icon: 'pooja-vidhanam', displayOrder: 1 },
-    { id: 'astothrams', key: 'astothrams', title: 'ಅಷ್ಟೋತ್ತರಗಳು', icon: 'astothrams', displayOrder: 2 },
-    { id: 'slokas', key: 'slokas', title: 'ಶ್ಲೋಕಗಳು', icon: 'slokas', displayOrder: 3 },
-    { id: 'bhajans', key: 'bhajans', title: 'ಭಜನೆಗಳು', icon: 'bhajans', displayOrder: 4 },
-    { id: 'harathis', key: 'harathis', title: 'ಆರತಿಗಳು\n& ಹಾಡುಗಳು', icon: 'harathis', displayOrder: 5 },
-    { id: 'live-streams', key: 'liveStreams', title: 'ನೇರ\nಪ್ರಸಾರ', icon: 'live-streams', displayOrder: 6 },
-    { id: 'panchangam', key: 'panchangam', title: 'ಪಂಚಾಂಗ', icon: 'panchangam', displayOrder: 7 },
-    { id: 'temples', key: 'temples', title: 'ಭಾರತದ\nದೇವಾಲಯಗಳು', icon: 'temples', displayOrder: 8 },
-    { id: 'donations', key: 'donations', title: 'ದೇಣಿಗೆಗಳು', icon: 'donations', displayOrder: 9 },
-    { id: 'food-donation', key: 'foodDonation', title: 'ಅನ್ನದಾನ', icon: 'food-donation', displayOrder: 10 },
-  ],
-  ta: [
-    { id: 'pooja-vidhanam', key: 'poojaVidhanam', title: 'பூஜை\nமுறைகள்', icon: 'pooja-vidhanam', displayOrder: 1 },
-    { id: 'astothrams', key: 'astothrams', title: 'அஷ்டோத்திர\nங்கள்', icon: 'astothrams', displayOrder: 2 },
-    { id: 'slokas', key: 'slokas', title: 'ஸ்லோகங்கள்', icon: 'slokas', displayOrder: 3 },
-    { id: 'bhajans', key: 'bhajans', title: 'பஜனைகள்', icon: 'bhajans', displayOrder: 4 },
-    { id: 'harathis', key: 'harathis', title: 'ஆரத்திகள்\n& பாடல்கள்', icon: 'harathis', displayOrder: 5 },
-    { id: 'live-streams', key: 'liveStreams', title: 'நேரலை\nதரிசனம்', icon: 'live-streams', displayOrder: 6 },
-    { id: 'panchangam', key: 'panchangam', title: 'பஞ்சாங்கம்', icon: 'panchangam', displayOrder: 7 },
-    { id: 'temples', key: 'temples', title: 'இந்திய\nஆலயங்கள்', icon: 'temples', displayOrder: 8 },
-    { id: 'donations', key: 'donations', title: 'நன்கொடைகள்', icon: 'donations', displayOrder: 9 },
-    { id: 'food-donation', key: 'foodDonation', title: 'அன்னதானம்', icon: 'food-donation', displayOrder: 10 },
-  ],
-  hi: [
-    { id: 'pooja-vidhanam', key: 'poojaVidhanam', title: 'पूजा\nविधान', icon: 'pooja-vidhanam', displayOrder: 1 },
-    { id: 'astothrams', key: 'astothrams', title: 'अष्टोत्तर', icon: 'astothrams', displayOrder: 2 },
-    { id: 'slokas', key: 'slokas', title: 'श्लोक', icon: 'slokas', displayOrder: 3 },
-    { id: 'bhajans', key: 'bhajans', title: 'भजन', icon: 'bhajans', displayOrder: 4 },
-    { id: 'harathis', key: 'harathis', title: 'आरती\nएवं गीत', icon: 'harathis', displayOrder: 5 },
-    { id: 'live-streams', key: 'liveStreams', title: 'लाइव\nदर्शन', icon: 'live-streams', displayOrder: 6 },
-    { id: 'panchangam', key: 'panchangam', title: 'पंचांग', icon: 'panchangam', displayOrder: 7 },
-    { id: 'temples', key: 'temples', title: 'भारत के\nमंदिर', icon: 'temples', displayOrder: 8 },
-    { id: 'donations', key: 'donations', title: 'दान', icon: 'donations', displayOrder: 9 },
-    { id: 'food-donation', key: 'foodDonation', title: 'अन्नदान', icon: 'food-donation', displayOrder: 10 },
-  ],
-  ml: [
-    { id: 'pooja-vidhanam', key: 'poojaVidhanam', title: 'പൂജാ\nവിധാനം', icon: 'pooja-vidhanam', displayOrder: 1 },
-    { id: 'astothrams', key: 'astothrams', title: 'അഷ്ടോത്തര\nങ്ങൾ', icon: 'astothrams', displayOrder: 2 },
-    { id: 'slokas', key: 'slokas', title: 'ശ്ലോകങ്ങൾ', icon: 'slokas', displayOrder: 3 },
-    { id: 'bhajans', key: 'bhajans', title: 'ഭജനകൾ', icon: 'bhajans', displayOrder: 4 },
-    { id: 'harathis', key: 'harathis', title: 'ആരതികൾ\n& പാട്ടുകൾ', icon: 'harathis', displayOrder: 5 },
-    { id: 'live-streams', key: 'liveStreams', title: 'ലൈവ്\nദർശനം', icon: 'live-streams', displayOrder: 6 },
-    { id: 'panchangam', key: 'panchangam', title: 'പഞ്ചാംഗം', icon: 'panchangam', displayOrder: 7 },
-    { id: 'temples', key: 'temples', title: 'ഭാരതത്തിലെ\nക്ഷേത്രങ്ങൾ', icon: 'temples', displayOrder: 8 },
-    { id: 'donations', key: 'donations', title: 'സംഭാവനകൾ', icon: 'donations', displayOrder: 9 },
-    { id: 'food-donation', key: 'foodDonation', title: 'അന്നദാനം', icon: 'food-donation', displayOrder: 10 },
-  ],
-};
-
-const BOTTOM_TABS_DICTIONARY: Record<string, Array<{ key: string; label: string; icon: string; order: number }>> = {
-  en: [
-    { key: 'home', label: 'Home', icon: 'home', order: 1 },
-    { key: 'services', label: 'Services', icon: 'services', order: 2 },
-    { key: 'temples', label: 'Temples', icon: 'temples', order: 3 },
-    { key: 'panchangam', label: 'Panchangam', icon: 'panchangam', order: 4 },
-    { key: 'profile', label: 'Profile', icon: 'profile', order: 5 },
-  ],
-  te: [
-    { key: 'home', label: 'Home', icon: 'home', order: 1 },
-    { key: 'services', label: 'Services', icon: 'services', order: 2 },
-    { key: 'temples', label: 'Temples', icon: 'temples', order: 3 },
-    { key: 'panchangam', label: 'Panchangam', icon: 'panchangam', order: 4 },
-    { key: 'profile', label: 'Profile', icon: 'profile', order: 5 },
-  ],
-  kn: [
-    { key: 'home', label: 'Home', icon: 'home', order: 1 },
-    { key: 'services', label: 'Services', icon: 'services', order: 2 },
-    { key: 'temples', label: 'Temples', icon: 'temples', order: 3 },
-    { key: 'panchangam', label: 'Panchangam', icon: 'panchangam', order: 4 },
-    { key: 'profile', label: 'Profile', icon: 'profile', order: 5 },
-  ],
-  ta: [
-    { key: 'home', label: 'Home', icon: 'home', order: 1 },
-    { key: 'services', label: 'Services', icon: 'services', order: 2 },
-    { key: 'temples', label: 'Temples', icon: 'temples', order: 3 },
-    { key: 'panchangam', label: 'Panchangam', icon: 'panchangam', order: 4 },
-    { key: 'profile', label: 'Profile', icon: 'profile', order: 5 },
-  ],
-  hi: [
-    { key: 'home', label: 'Home', icon: 'home', order: 1 },
-    { key: 'services', label: 'Services', icon: 'services', order: 2 },
-    { key: 'temples', label: 'Temples', icon: 'temples', order: 3 },
-    { key: 'panchangam', label: 'Panchangam', icon: 'panchangam', order: 4 },
-    { key: 'profile', label: 'Profile', icon: 'profile', order: 5 },
-  ],
-  ml: [
-    { key: 'home', label: 'Home', icon: 'home', order: 1 },
-    { key: 'services', label: 'Services', icon: 'services', order: 2 },
-    { key: 'temples', label: 'Temples', icon: 'temples', order: 3 },
-    { key: 'panchangam', label: 'Panchangam', icon: 'panchangam', order: 4 },
-    { key: 'profile', label: 'Profile', icon: 'profile', order: 5 },
-  ],
+  contact_us: {
+    te: {
+      title: 'మమ్మల్ని సంప్రదించండి & సహాయ కేంద్రం',
+      content: 'శరణం అయ్యప్ప భక్త సహాయ కేంద్రం. ఆలయ సమాచారం, నిత్య పూజలు లేదా ఏదైనా సూచనల కోసం మాకు ఈమెయిల్ చేయండి: support@saranamayyappa.org. ఆలయ ట్రస్ట్‌లు తమ ఆలయాన్ని ఉచితంగా నమోదు చేసుకోవచ్చు.',
+    },
+    kn: {
+      title: 'ಸಂಪರ್ಕಿಸಿ ಮತ್ತು ಸಹಾಯ ಕೇಂದ್ರ',
+      content: 'ಶರಣಂ ಅಯ್ಯಪ್ಪ ಭಕ್ತ ಸಹಾಯ ಕೇಂದ್ರ. ದೇವಾಲಯದ ಮಾಹಿತಿ ಅಥವಾ ಯಾವುದೇ ಪ್ರಶ್ನೆಗಳಿಗೆ ನಮಗೆ ಇಮೇಲ್ ಮಾಡಿ: support@saranamayyappa.org.',
+    },
+    en: {
+      title: 'Contact Us & Help Center',
+      content: 'Questions, corrections to a temple listing, or partnership enquiries — we\'d love to hear from you. Email: support@saranamayyappa.org for general queries and listing corrections.',
+    },
+    ta: {
+      title: 'எங்களைத் தொடர்பு கொள்ளவும் & உதவி மையம்',
+      content: 'சரணம் ஐயப்பா பக்தர் உதவி மையம். சந்தேகங்கள் மற்றும் தகவல்களுக்கு எங்களை தொடர்பு கொள்ளவும்: support@saranamayyappa.org.',
+    },
+    hi: {
+      title: 'संपर्क करें और सहायता केंद्र',
+      content: 'शरणम् अय्यप्पा भक्त सहायता केंद्र। मंदिर संबंधी प्रश्नों और सहायता के लिए हमें ईमेल करें: support@saranamayyappa.org.',
+    },
+  },
 };
