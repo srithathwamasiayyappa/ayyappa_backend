@@ -344,53 +344,85 @@ export class TemplesService implements OnModuleInit {
       name: localizedName,
       originalName: t.name,
       localNames,
-      deityId: t.deity_id || t.deityId,
-      deityName: t.deity_name || t.deityName || undefined,
+      deityId: t.deity_id || t.deityId || t.primary_deity || 'ayyappa',
+      deityName: t.deity_name || t.deityName || t.primary_deity || undefined,
       city: t.city,
       district: t.district || undefined,
       state: t.state,
       country: t.country || 'India',
       address: t.address || undefined,
       pincode: t.pincode || undefined,
-      latitude: t.latitude ?? undefined,
-      longitude: t.longitude ?? undefined,
-      thumbnailUrl: t.thumbnail_url || t.thumbnailUrl || undefined,
-      heroImageUrl: t.hero_image_url || t.heroImageUrl || undefined,
-      about: t.about,
+      latitude: t.latitude != null ? Number(t.latitude) : undefined,
+      longitude: t.longitude != null ? Number(t.longitude) : undefined,
+      thumbnailUrl: t.thumbnail_url || t.thumbnailUrl || t.gopuram_image_url || t.hero_image_url || undefined,
+      heroImageUrl: t.hero_image_url || t.heroImageUrl || t.gopuram_image_url || undefined,
+      about: t.about || t.short_description || '',
       history: t.history || undefined,
-      speciality: speciality.length > 0 ? speciality : undefined,
+      speciality: speciality.length > 0 ? speciality : (t.speciality ? [t.speciality] : undefined),
       timings,
-      contact,
+      contact: contact || (t.office_phone ? { phone: t.office_phone, email: t.official_email, website: t.official_website } : undefined),
       liveStreamId: t.live_stream_id || t.liveStreamId || undefined,
       hasLiveDarshan: Boolean(t.has_live_darshan || t.hasLiveDarshan),
-      cropIndex: t.crop_index ?? t.cropIndex ?? 0,
-      isActive: Boolean(t.is_active ?? t.isActive ?? true),
+      cropIndex: t.crop_index ?? t.cropIndex ?? t.display_order ?? 0,
+      isActive: Boolean(t.is_active ?? t.isActive ?? (t.status ? t.status === 'PUBLISHED' : true)),
     };
   }
 
   async getTemples(query: { lang?: string; q?: string; deity?: string }): Promise<TempleDto[]> {
     await this.ensureTablesExist();
 
-    let sql = 'SELECT * FROM `temples` WHERE `is_active` = 1';
-    const params: any[] = [];
-
-    if (query.deity && query.deity !== 'all') {
-      sql += ' AND LOWER(`deity_id`) = ?';
-      params.push(query.deity.toLowerCase());
-    }
-
-    if (query.q && query.q.trim()) {
-      const q = `%${query.q.trim()}%`;
-      sql += ' AND (`name` LIKE ? OR `city` LIKE ? OR `state` LIKE ? OR `deity_name` LIKE ? OR `district` LIKE ? OR `local_names_json` LIKE ?)';
-      params.push(q, q, q, q, q, q);
-    }
-
-    sql += ' ORDER BY `crop_index` ASC, `id` ASC';
-
     try {
-      const rows: any = await this.prisma.$queryRawUnsafe(sql, ...params);
+      const rows: any = await this.prisma.$queryRawUnsafe('SELECT * FROM `temples`');
       if (Array.isArray(rows)) {
-        return rows.map((r) => this.transformTemple(r, query.lang || 'en'));
+        let filtered = rows;
+
+        // Status / active filter
+        filtered = filtered.filter((r) => {
+          if (r.is_active !== undefined && r.is_active !== null) {
+            return Boolean(r.is_active);
+          }
+          if (r.status !== undefined && r.status !== null) {
+            return r.status === 'PUBLISHED';
+          }
+          return true;
+        });
+
+        // Deity filter
+        if (query.deity && query.deity !== 'all') {
+          const dLower = query.deity.toLowerCase();
+          filtered = filtered.filter((r) => {
+            const rowDeity = (r.deity_id || r.primary_deity || '').toLowerCase();
+            return rowDeity.includes(dLower);
+          });
+        }
+
+        // Search query filter
+        if (query.q && query.q.trim()) {
+          const qLower = query.q.trim().toLowerCase();
+          filtered = filtered.filter((r) => {
+            const nameStr = (r.name || '').toLowerCase();
+            const cityStr = (r.city || '').toLowerCase();
+            const stateStr = (r.state || '').toLowerCase();
+            const deityStr = (r.deity_name || r.primary_deity || '').toLowerCase();
+            const localNamesStr = (r.local_names_json || r.alternate_name || '').toLowerCase();
+            return (
+              nameStr.includes(qLower) ||
+              cityStr.includes(qLower) ||
+              stateStr.includes(qLower) ||
+              deityStr.includes(qLower) ||
+              localNamesStr.includes(qLower)
+            );
+          });
+        }
+
+        // Sort by crop_index / display_order
+        filtered.sort((a, b) => {
+          const orderA = a.crop_index ?? a.display_order ?? 0;
+          const orderB = b.crop_index ?? b.display_order ?? 0;
+          return orderA - orderB;
+        });
+
+        return filtered.map((r) => this.transformTemple(r, query.lang || 'en'));
       }
     } catch (e) {
       console.warn('[TemplesService] getTemples error:', e);
@@ -403,19 +435,17 @@ export class TemplesService implements OnModuleInit {
     await this.ensureTablesExist();
 
     const numericId = parseInt(idOrSlug, 10);
-    let sql = 'SELECT * FROM `temples` WHERE (`slug` = ?';
-    const params: any[] = [idOrSlug];
-
-    if (!isNaN(numericId)) {
-      sql += ' OR `id` = ?';
-      params.push(numericId);
-    }
-    sql += ') AND `is_active` = 1 LIMIT 1';
-
     try {
-      const rows: any = await this.prisma.$queryRawUnsafe(sql, ...params);
-      if (Array.isArray(rows) && rows.length > 0) {
-        return this.transformTemple(rows[0], lang);
+      const rows: any = await this.prisma.$queryRawUnsafe('SELECT * FROM `temples`');
+      if (Array.isArray(rows)) {
+        const found = rows.find((r) => {
+          if (r.slug === idOrSlug) return true;
+          if (!isNaN(numericId) && r.id === numericId) return true;
+          return false;
+        });
+        if (found) {
+          return this.transformTemple(found, lang);
+        }
       }
     } catch (e) {
       console.warn('[TemplesService] getTempleById error:', e);
