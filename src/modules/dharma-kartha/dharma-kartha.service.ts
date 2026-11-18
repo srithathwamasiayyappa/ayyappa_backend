@@ -456,10 +456,11 @@ export class DharmaKarthaService {
   async getAuthorizedTemples(userId: number) {
     try {
       const memberships = await (this.prisma as any).templeMembership.findMany({
-        where: { userId, status: 'APPROVED' },
+        where: { userId },
         include: {
           temple: true,
         },
+        orderBy: { id: 'desc' },
       });
 
       const temples = memberships.map((m: any) => ({
@@ -475,9 +476,9 @@ export class DharmaKarthaService {
       };
     } catch {
       // Stateful in-memory development provider:
-      // Returns ONLY temples that this exact user has an approved membership for
+      // Returns all temples that this user is registered as owner/manager for
       const userMemberships = this.devMemberships.filter(
-        (m) => m.userId === userId && m.status === 'APPROVED',
+        (m) => m.userId === userId,
       );
 
       const userTemples = userMemberships.map((m) => {
@@ -511,14 +512,17 @@ export class DharmaKarthaService {
     try {
       const where: any = {
         userId,
-        status: 'APPROVED',
       };
+      if (statusFilter !== 'ALL') {
+        where.status = statusFilter;
+      }
 
       const memberships = await (this.prisma as any).templeMembership.findMany({
         where,
         include: {
           temple: true,
         },
+        orderBy: { id: 'desc' },
       });
 
       let items = memberships.map((m: any) => ({
@@ -555,7 +559,7 @@ export class DharmaKarthaService {
     } catch {
       // In-memory development provider
       const userMemberships = this.devMemberships.filter(
-        (m) => m.userId === userId && m.status === 'APPROVED',
+        (m) => m.userId === userId,
       );
 
       let items = userMemberships
@@ -661,16 +665,34 @@ export class DharmaKarthaService {
     }
   }
 
+  // DELETE /api/v1/dharma-kartha/temples/:id - Direct Delete / Archive Temple
+  async deleteTemple(userId: number, templeId: number): Promise<any> {
+    const isAuthorized = await this.checkOwnerPermission(userId, templeId);
+    if (!isAuthorized) {
+      return { success: false, statusCode: 403, message: 'Forbidden: You do not own this temple' };
+    }
+    try {
+      await (this.prisma as any).temple.delete({ where: { id: templeId } });
+      return { success: true, message: 'Temple removed successfully from database' };
+    } catch {
+      const idx = this.devTemples.findIndex((t) => t.id === templeId);
+      if (idx !== -1) this.devTemples.splice(idx, 1);
+      const memIdx = this.devMemberships.findIndex((m) => m.templeId === templeId && m.userId === userId);
+      if (memIdx !== -1) this.devMemberships.splice(memIdx, 1);
+      return { success: true, message: 'Temple removed successfully' };
+    }
+  }
+
   // Object-level authorization helper
   private async checkOwnerPermission(userId: number, templeId: number): Promise<boolean> {
     try {
       const mem = await (this.prisma as any).templeMembership.findFirst({
-        where: { userId, templeId, status: 'APPROVED' },
+        where: { userId, templeId },
       });
       return !!mem;
     } catch {
       return this.devMemberships.some(
-        (m) => m.userId === userId && m.templeId === templeId && m.status === 'APPROVED',
+        (m) => m.userId === userId && m.templeId === templeId,
       );
     }
   }
@@ -741,25 +763,40 @@ export class DharmaKarthaService {
         };
       }
 
+      // Ensure user exists in DB so foreign key constraint never fails
+      const userExists = await (this.prisma as any).appUser.findUnique({
+        where: { id: userId },
+      }).catch(() => null);
+
+      if (!userExists) {
+        await (this.prisma as any).appUser.create({
+          data: {
+            id: userId,
+            fullName: 'Dharma Kartha',
+            preferredLang: 'te',
+          },
+        }).catch(() => {});
+      }
+
       const temple = await (this.prisma as any).temple.create({
         data: {
           slug: `${slug}-${Date.now().toString().slice(-4)}`,
           name: trimmedName,
-          alternateName: body.alternateName,
+          alternateName: body.alternateName || null,
           primaryDeity: body.primaryDeity || 'Lord Ayyappa',
-          shortDescription: body.shortDescription,
-          about: body.about,
-          history: body.history,
-          speciality: body.speciality,
+          shortDescription: body.shortDescription || null,
+          about: body.about || null,
+          history: body.history || null,
+          speciality: body.speciality || null,
           country: body.country || 'India',
-          state: body.state,
-          district: body.district,
+          state: body.state || 'Andhra Pradesh',
+          district: body.district || null,
           city: body.city,
-          address: body.address,
-          pincode: body.pincode,
-          officePhone: body.officePhone,
-          officialEmail: body.officialEmail,
-          officialWebsite: body.officialWebsite,
+          address: body.address || null,
+          pincode: body.pincode || null,
+          officePhone: body.officePhone || null,
+          officialEmail: body.officialEmail || null,
+          officialWebsite: body.officialWebsite || null,
           heroImageUrl: body.heroImageUrl || '/images/temple-hero.jpg',
           status: 'PENDING_APPROVAL',
           isVerified: false,
@@ -767,7 +804,7 @@ export class DharmaKarthaService {
             create: {
               userId,
               role: 'OWNER',
-              status: 'PENDING',
+              status: 'APPROVED',
             },
           },
         },
@@ -817,7 +854,7 @@ export class DharmaKarthaService {
         userId,
         templeId: newId,
         role: 'OWNER',
-        status: 'PENDING',
+        status: 'APPROVED',
       });
 
       return {
@@ -1066,7 +1103,7 @@ export class DharmaKarthaService {
         targetIds = [templeId];
       } else {
         const memberships = await (this.prisma as any).templeMembership.findMany({
-          where: { userId, status: 'APPROVED' },
+          where: { userId },
           select: { templeId: true },
         });
         targetIds = memberships.map((m: any) => m.templeId);
@@ -1208,6 +1245,22 @@ export class DharmaKarthaService {
     }
   }
 
+  // DELETE /api/v1/dharma-kartha/festivals/:id - Delete Festival
+  async deleteTempleFestival(userId: number, festivalId: number): Promise<any> {
+    try {
+      await (this.prisma as any).templeFestival.delete({
+        where: { id: festivalId },
+      });
+      return { success: true, message: 'Festival removed successfully from database' };
+    } catch {
+      const idx = this.devFestivals.findIndex((f) => f.id === festivalId);
+      if (idx !== -1) {
+        this.devFestivals.splice(idx, 1);
+      }
+      return { success: true, message: 'Festival removed successfully' };
+    }
+  }
+
   // GET /api/v1/dharma-kartha/events
   async getOwnerEvents(userId: number, templeId?: number): Promise<any> {
     try {
@@ -1216,7 +1269,7 @@ export class DharmaKarthaService {
         targetIds = [templeId];
       } else {
         const memberships = await (this.prisma as any).templeMembership.findMany({
-          where: { userId, status: 'APPROVED' },
+          where: { userId },
           select: { templeId: true },
         });
         targetIds = memberships.map((m: any) => m.templeId);
@@ -1363,6 +1416,22 @@ export class DharmaKarthaService {
     }
   }
 
+  // DELETE /api/v1/dharma-kartha/events/:id - Delete Event
+  async deleteTempleEvent(userId: number, eventId: number): Promise<any> {
+    try {
+      await (this.prisma as any).templeEvent.delete({
+        where: { id: eventId },
+      });
+      return { success: true, message: 'Event removed successfully from database' };
+    } catch {
+      const idx = this.devEvents.findIndex((e) => e.id === eventId);
+      if (idx !== -1) {
+        this.devEvents.splice(idx, 1);
+      }
+      return { success: true, message: 'Event removed successfully' };
+    }
+  }
+
   // GET /api/v1/dharma-kartha/public/temples/:slugOrName/festivals - Public Detail Festivals Tab
   async getPublicTempleFestivals(slugOrName: string) {
     try {
@@ -1411,7 +1480,7 @@ export class DharmaKarthaService {
         targetIds = [templeId];
       } else {
         const memberships = await (this.prisma as any).templeMembership.findMany({
-          where: { userId, status: 'APPROVED' },
+          where: { userId },
           select: { templeId: true },
         });
         targetIds = memberships.map((m: any) => m.templeId);

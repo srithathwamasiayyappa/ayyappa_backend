@@ -210,6 +210,17 @@ export class DharmaKarthaController {
     return result;
   }
 
+  // DELETE /api/v1/dharma-kartha/festivals/:id
+  @Delete('festivals/:id')
+  async deleteFestival(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
+    @Param('id') id: string,
+  ) {
+    const userId = this.resolveUserId(headers, query);
+    return this.dkService.deleteTempleFestival(userId, parseInt(id, 10));
+  }
+
   // GET /api/v1/dharma-kartha/events
   @Get('events')
   async getEvents(
@@ -250,6 +261,17 @@ export class DharmaKarthaController {
       throw new UnauthorizedException(result.message);
     }
     return result;
+  }
+
+  // DELETE /api/v1/dharma-kartha/events/:id
+  @Delete('events/:id')
+  async deleteEvent(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
+    @Param('id') id: string,
+  ) {
+    const userId = this.resolveUserId(headers, query);
+    return this.dkService.deleteTempleEvent(userId, parseInt(id, 10));
   }
 
   // GET /api/v1/dharma-kartha/public/temples/:slugOrName/festivals
@@ -395,5 +417,20 @@ export class DharmaKarthaController {
   ) {
     const userId = this.resolveUserId(headers, query);
     return this.dkService.requestTempleDeletion(userId, parseInt(id, 10), body?.reason || 'Owner request');
+  }
+
+  // 8. DELETE /api/v1/dharma-kartha/temples/:id (Direct Delete Mandir)
+  @Delete('temples/:id')
+  async deleteTemple(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
+    @Param('id') id: string,
+  ) {
+    const userId = this.resolveUserId(headers, query);
+    const result = await this.dkService.deleteTemple(userId, parseInt(id, 10));
+    if (!result.success && result.statusCode === 403) {
+      throw new UnauthorizedException(result.message);
+    }
+    return result;
   }
 }

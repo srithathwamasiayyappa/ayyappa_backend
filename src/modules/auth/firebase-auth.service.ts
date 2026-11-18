@@ -274,6 +274,10 @@ export class FirebaseAuthService {
       );
     }
 
+    if (existingUser.isDeleted) {
+      throw new UnauthorizedException('This devotee account has been deactivated. Please contact temple administration.');
+    }
+
     if (existingUser.isSuspended) {
       throw new UnauthorizedException('Your devotee account is currently suspended. Please contact temple administration.');
     }

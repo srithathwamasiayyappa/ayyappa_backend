@@ -5,6 +5,18 @@ import { MasterService } from './master.service';
 export class MasterController {
   constructor(private readonly masterService: MasterService) {}
 
+  /**
+   * Unified endpoint: Fetch all profile master options (rashis, nakshatras, languages, states, districts, deities, logos)
+   */
+  @Get('profile-options')
+  async getProfileOptions(@Query('lang') lang?: string, @Query('state') state?: string) {
+    const data = await this.masterService.getProfileOptions(lang || 'te', state);
+    return {
+      success: true,
+      data,
+    };
+  }
+
   @Get('rashis')
   async getRashis(@Query('lang') lang?: string) {
     const rashis = await this.masterService.getRashis(lang || 'te');
@@ -22,5 +34,49 @@ export class MasterController {
       data: nakshatras,
     };
   }
-}
 
+  @Get('languages')
+  async getLanguages() {
+    const languages = await this.masterService.getLanguages();
+    return {
+      success: true,
+      data: languages,
+    };
+  }
+
+  @Get('states')
+  async getStates() {
+    const states = await this.masterService.getStates();
+    return {
+      success: true,
+      data: states,
+    };
+  }
+
+  @Get('districts')
+  async getDistricts(@Query('state') state?: string) {
+    const districts = await this.masterService.getDistricts(state);
+    return {
+      success: true,
+      data: districts,
+    };
+  }
+
+  @Get('deities')
+  async getDeities() {
+    const deities = await this.masterService.getDeities();
+    return {
+      success: true,
+      data: deities,
+    };
+  }
+
+  @Get('preset-logos')
+  async getPresetLogos() {
+    const logos = this.masterService.getPresetLogos();
+    return {
+      success: true,
+      data: logos,
+    };
+  }
+}

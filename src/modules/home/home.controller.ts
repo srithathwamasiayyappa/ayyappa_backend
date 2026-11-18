@@ -31,60 +31,76 @@ export class HomeController {
   // Public App Logo & Brand Identity Endpoint for Website, Admin, and Mobile Apps
   @Get('logo')
   async getAppLogo() {
-    const settings = await this.prisma.appSetting.findMany({
-      where: {
-        key: {
-          in: [
-            'app_logo',
-            'app_title',
-            'app_tagline',
-            'app_description',
-            'theme_primary_color',
-            'theme_secondary_color',
-            'app_play_store_url',
-            'app_app_store_url',
-            'app_store_subtext',
-            'app_footer_desc',
-            'social_youtube_url',
-            'social_telegram_url',
-            'social_instagram_url',
-            'social_facebook_url',
-            'social_whatsapp_url'
-          ]
-        }
-      }
-    });
+    const defaultSettings: Record<string, string> = {
+      app_logo: '/images/saranam-ayyappa-official-emblem.jpg',
+      app_title: 'Saranam Ayyappa',
+      app_tagline: 'Connect.. Pray.. Serve..',
+      app_description: 'A sacred digital sanctuary and comprehensive devotional guide for Lord Ayyappa devotees and Dharma Karthas worldwide.',
+      theme_primary_color: '#06452E',
+      theme_secondary_color: '#CAA049',
+      app_play_store_url: 'https://play.google.com/store/apps/details?id=com.saranamayyappa.app',
+      app_app_store_url: 'https://apps.apple.com/app/saranam-ayyappa/id123456789',
+      app_store_subtext: 'Available on iOS & Android',
+      app_footer_desc: 'Experience daily darshan, audio bhajans, Panchangam alerts & sacred pooja vidhanam on your mobile.',
+      social_youtube_url: 'https://www.youtube.com/@SaranamAyyappaOfficial',
+      social_telegram_url: 'https://t.me/saranam_ayyappa_satsang',
+      social_instagram_url: 'https://www.instagram.com/saranamayyappa_official',
+      social_facebook_url: 'https://www.facebook.com/saranamayyappaportal',
+      social_whatsapp_url: 'https://whatsapp.com/channel/saranamayyappa',
+    };
 
-    const settingsMap: Record<string, string> = {};
-    settings.forEach(s => {
-      settingsMap[s.key] = s.value;
-    });
+    let settingsMap: Record<string, string> = { ...defaultSettings };
+
+    try {
+      const settings = await this.prisma.appSetting.findMany({
+        where: {
+          key: {
+            in: Object.keys(defaultSettings)
+          }
+        }
+      });
+
+      settings.forEach(s => {
+        if (s.value) settingsMap[s.key] = s.value;
+      });
+    } catch (dbErr) {
+      // Fallback cleanly to defaultSettings if database is reconnecting
+    }
 
     const rawLogo = settingsMap['app_logo'];
-    const logoUrl = rawLogo
-      ? (rawLogo.startsWith('http://') || rawLogo.startsWith('https://') || rawLogo.startsWith('data:')
-          ? rawLogo
-          : `https://backendapis.saranamayyappa.in${rawLogo.startsWith('/') ? '' : '/'}${rawLogo}`)
-      : '/images/saranam-ayyappa-official-emblem.jpg';
+    let logoUrl = '/images/saranam-ayyappa-official-emblem.jpg';
+
+    if (rawLogo) {
+      if (rawLogo.startsWith('http://') || rawLogo.startsWith('https://') || rawLogo.startsWith('data:')) {
+        logoUrl = rawLogo;
+      } else if (rawLogo.startsWith('/images/')) {
+        logoUrl = rawLogo;
+      } else if (rawLogo.startsWith('/uploads/') || rawLogo.startsWith('uploads/')) {
+        const cleanUpload = rawLogo.startsWith('/') ? rawLogo : `/${rawLogo}`;
+        logoUrl = `https://backendapis.saranamayyappa.in${cleanUpload}`;
+      } else {
+        logoUrl = rawLogo.startsWith('/') ? rawLogo : `/${rawLogo}`;
+      }
+    }
     return {
       success: true,
       logoUrl,
       title: settingsMap['app_title'] || 'Saranam Ayyappa',
       appName: `${settingsMap['app_title'] || 'Saranam Ayyappa'} App`,
       tagline: settingsMap['app_tagline'] || 'Connect.. Pray.. Serve..',
-      description: settingsMap['app_description'] || 'A sacred digital sanctuary and comprehensive devotional guide for Lord Ayyappa devotees and Dharma Karthas worldwide.',
+      description: settingsMap['app_description'] || defaultSettings.app_description,
       primaryColor: settingsMap['theme_primary_color'] || '#06452E',
       secondaryColor: settingsMap['theme_secondary_color'] || '#CAA049',
-      playStoreUrl: settingsMap['app_play_store_url'] || 'https://play.google.com/store/apps/details?id=com.saranamayyappa.app',
-      appStoreUrl: settingsMap['app_app_store_url'] || 'https://apps.apple.com/app/saranam-ayyappa/id123456789',
-      storeSubtext: settingsMap['app_store_subtext'] || 'Available on iOS & Android',
-      footerAppDesc: settingsMap['app_footer_desc'] || 'Experience daily darshan, audio bhajans, Panchangam alerts & sacred pooja vidhanam on your mobile.',
+      playStoreUrl: settingsMap['app_play_store_url'] || defaultSettings.app_play_store_url,
+      appStoreUrl: settingsMap['app_app_store_url'] || defaultSettings.app_app_store_url,
+      storeSubtext: settingsMap['app_store_subtext'] || defaultSettings.app_store_subtext,
+      footerAppDesc: settingsMap['app_footer_desc'] || defaultSettings.footerAppDesc,
       socialLinks: {
-        youtube: settingsMap['social_youtube_url'] || 'https://www.youtube.com/@SaranamAyyappaOfficial',
-        telegram: settingsMap['social_telegram_url'] || 'https://t.me/saranam_ayyappa_satsang',
-        instagram: settingsMap['social_instagram_url'] || 'https://www.instagram.com/saranamayyappa_official',
-        facebook: settingsMap['social_facebook_url'] || 'https://www.facebook.com/saranamayyappaportal',
-        whatsapp: settingsMap['social_whatsapp_url'] || 'https://whatsapp.com/channel/saranamayyappa'
+        youtube: settingsMap['social_youtube_url'] || defaultSettings.social_youtube_url,
+        telegram: settingsMap['social_telegram_url'] || defaultSettings.social_telegram_url,
+        instagram: settingsMap['social_instagram_url'] || defaultSettings.social_instagram_url,
+        facebook: settingsMap['social_facebook_url'] || defaultSettings.social_facebook_url,
+        whatsapp: settingsMap['social_whatsapp_url'] || defaultSettings.social_whatsapp_url,
       },
       updatedAt: new Date()
     };
@@ -99,26 +115,39 @@ export class HomeController {
   // Public Devotional Social Media & Community Handles from DB
   @Get('social-links')
   async getSocialLinks() {
-    const settings = await this.prisma.appSetting.findMany({
-      where: {
-        key: {
-          in: [
-            'social_youtube_url',
-            'social_telegram_url',
-            'social_whatsapp_url',
-            'social_instagram_url',
-            'social_facebook_url',
-            'app_title',
-            'app_tagline'
-          ]
-        }
-      }
-    });
+    const map: Record<string, string> = {
+      social_youtube_url: 'https://www.youtube.com/@SaranamAyyappaOfficial',
+      social_telegram_url: 'https://t.me/saranam_ayyappa_satsang',
+      social_whatsapp_url: 'https://whatsapp.com/channel/saranamayyappa',
+      social_instagram_url: 'https://www.instagram.com/saranamayyappa_official',
+      social_facebook_url: 'https://www.facebook.com/saranamayyappaportal',
+      app_title: 'Saranam Ayyappa',
+      app_tagline: 'Connect.. Pray.. Serve..',
+    };
 
-    const map: Record<string, string> = {};
-    settings.forEach(s => {
-      map[s.key] = s.value;
-    });
+    try {
+      const settings = await this.prisma.appSetting.findMany({
+        where: {
+          key: {
+            in: [
+              'social_youtube_url',
+              'social_telegram_url',
+              'social_whatsapp_url',
+              'social_instagram_url',
+              'social_facebook_url',
+              'app_title',
+              'app_tagline'
+            ]
+          }
+        }
+      });
+
+      settings.forEach(s => {
+        if (s.value) map[s.key] = s.value;
+      });
+    } catch (dbErr) {
+      // Fallback cleanly
+    }
 
     const list: Array<{ id: string; name: string; title: string; url: string; icon: string; isShare?: boolean }> = [];
 
@@ -186,11 +215,11 @@ export class HomeController {
     });
 
     let types = [
-      { id: 'MAIN_TEMPLE', name: 'Main Temple', description: 'Primary sacred sanctum, principal deity shrine & historic maha kshetram' },
-      { id: 'SUB_TEMPLE', name: 'Sub Temple', description: 'Affiliated shrines, upalayam, sub-sanctums within compound or surrounding jurisdiction' },
-      { id: 'MULTI_TEMPLE', name: 'Multi Temple (Trust / Complex)', description: 'Integrated religious cluster, temple complex with multiple shrines managed under one trust' },
-      { id: 'COMMUNITY_TEMPLE', name: 'Community / Village Mandir', description: 'Devotee-run local samithi mandir or village shrine' },
-      { id: 'HERITAGE_SHRINE', name: 'Ancient Heritage Shrine', description: 'Historical or archaeological sacred site of pilgrimage importance' }
+      { id: 'MAIN_TEMPLE', name: 'Main Temple', description: 'Primary institutional shrine with full sanctum and daily scheduled poojas.' },
+      { id: 'SUB_TEMPLE', name: 'Sub Temple', description: 'Branch temple or subsidiary shrine affiliated to a central trust.' },
+      { id: 'MULTI_TEMPLE', name: 'Multi-Deity Temple Complex', description: 'Grand religious complex housing multiple sanctums and deities.' },
+      { id: 'COMMUNITY_TEMPLE', name: 'Community Temple', description: 'Locally organized bhajana mandiram or residential colony shrine.' },
+      { id: 'HERITAGE_SHRINE', name: 'Heritage Shrine', description: 'Ancient historic pilgrimage site or forest shrine.' },
     ];
 
     if (setting && setting.value) {
@@ -211,36 +240,68 @@ export class HomeController {
   // Public Categories & Devotional Services Endpoint from DB
   @Get('services')
   async getDevotionalServices(@Query('search') search?: string) {
-    const where: any = { isActive: true };
+    try {
+      const where: any = { isActive: true };
 
-    if (search && search.trim() !== '') {
-      const q = search.trim();
-      where.OR = [
-        { title: { contains: q } },
-        { sub: { contains: q } },
-        { serviceId: { contains: q } },
-      ];
+      if (search && search.trim() !== '') {
+        const q = search.trim();
+        where.OR = [
+          { title: { contains: q } },
+          { sub: { contains: q } },
+          { serviceId: { contains: q } },
+        ];
+      }
+
+      if ((this.prisma as any).categoryService) {
+        const items = await (this.prisma as any).categoryService.findMany({
+          where,
+          orderBy: { displayOrder: 'asc' },
+        });
+
+        if (items && items.length > 0) {
+          return {
+            success: true,
+            data: items.map((item: any) => ({
+              id: item.serviceId,
+              serviceId: item.serviceId,
+              title: item.title,
+              sub: item.sub || '',
+              icon: item.icon,
+              url: item.url,
+              image: item.image || '',
+              artwork: item.artwork || '',
+              displayOrder: item.displayOrder,
+            })),
+            count: items.length,
+          };
+        }
+      }
+    } catch (e) {
+      // Fallback cleanly
     }
 
-    const items = await this.prisma.categoryService.findMany({
-      where,
-      orderBy: { displayOrder: 'asc' },
-    });
+    const fallbackServices = [
+      { id: 'pooja', serviceId: 'pooja', title: 'Pooja Vidhanam', sub: 'Sacred Ritual Guide', icon: 'Flame', url: '/subcategories', displayOrder: 1 },
+      { id: 'stotras', serviceId: 'stotras', title: 'Divine Stotras', sub: 'Sacred Hymns & Chants', icon: 'BookOpen', url: '/stotras', displayOrder: 2 },
+      { id: 'slokas', serviceId: 'slokas', title: 'Daily Slokas', sub: 'Verses for Meditation', icon: 'Scroll', url: '/slokas', displayOrder: 3 },
+      { id: 'songs', serviceId: 'songs', title: 'Bhajans & Songs', sub: 'Devotional Melodies', icon: 'Music', url: '/songs', displayOrder: 4 },
+      { id: 'live-streams', serviceId: 'live-streams', title: 'Live Darshan', sub: 'Daily Temple Streams', icon: 'Tv', url: '/live-streams', displayOrder: 5 },
+      { id: 'panchangam', serviceId: 'panchangam', title: 'Panchangam', sub: 'Auspicious Timings', icon: 'Calendar', url: '/panchangam', displayOrder: 6 },
+      { id: 'festivals', serviceId: 'festivals', title: 'Temple Festivals', sub: 'Annual Celebrations', icon: 'Sparkles', url: '/festivals', displayOrder: 7 },
+      { id: 'temples', serviceId: 'temples', title: 'Sacred Temples', sub: 'Shrines & Pilgrimages', icon: 'Landmark', url: '/temples', displayOrder: 8 },
+      { id: 'donations', serviceId: 'donations', title: 'Annadanam Seva', sub: 'Meal Offering & Seva', icon: 'HeartHandshake', url: '/donations', displayOrder: 9 },
+    ];
+
+    let filtered = fallbackServices;
+    if (search && search.trim() !== '') {
+      const q = search.trim().toLowerCase();
+      filtered = fallbackServices.filter(s => s.title.toLowerCase().includes(q) || s.sub.toLowerCase().includes(q) || s.serviceId.toLowerCase().includes(q));
+    }
 
     return {
       success: true,
-      data: items.map((item) => ({
-        id: item.serviceId,
-        serviceId: item.serviceId,
-        title: item.title,
-        sub: item.sub || '',
-        icon: item.icon,
-        url: item.url,
-        image: item.image || '',
-        artwork: item.artwork || '',
-        displayOrder: item.displayOrder,
-      })),
-      count: items.length,
+      data: filtered,
+      count: filtered.length,
     };
   }
 
