@@ -94,5 +94,76 @@ export class UsersController {
     }
     return this.usersService.requestAccountDeletion(userId, body.otp.trim(), body.reason);
   }
+
+  /**
+   * GET /api/v1/users/me/bookmarks
+   */
+  @Get('me/bookmarks')
+  async getMyBookmarks(
+    @Headers() headers: Record<string, any>,
+    @Query() query: { userId?: string },
+  ) {
+    const userId = this.extractUserId(headers, query);
+    const bookmarks = await this.usersService.getBookmarks(userId);
+    return {
+      success: true,
+      data: bookmarks,
+    };
+  }
+
+  /**
+   * POST /api/v1/users/me/bookmarks
+   */
+  @Post('me/bookmarks')
+  async addBookmark(
+    @Headers() headers: Record<string, any>,
+    @Query() query: { userId?: string },
+    @Body() body: { itemId: string; itemType: string; title: string; subtitle?: string; thumbnailUrl?: string },
+  ) {
+    const userId = this.extractUserId(headers, query, body as any);
+    return this.usersService.addBookmark(userId, body);
+  }
+
+  /**
+   * DELETE /api/v1/users/me/bookmarks/:id
+   */
+  @Get('me/bookmarks/delete')
+  async deleteBookmarkViaGet(
+    @Headers() headers: Record<string, any>,
+    @Query() query: { userId?: string; id: string },
+  ) {
+    const userId = this.extractUserId(headers, query);
+    if (!query.id) throw new BadRequestException('Bookmark id is required');
+    return this.usersService.removeBookmark(userId, query.id);
+  }
+
+  /**
+   * GET /api/v1/users/me/preferences
+   */
+  @Get('me/preferences')
+  async getPreferences(
+    @Headers() headers: Record<string, any>,
+    @Query() query: { userId?: string },
+  ) {
+    const userId = this.extractUserId(headers, query);
+    const data = await this.usersService.getPreferences(userId);
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  /**
+   * PATCH /api/v1/users/me/preferences
+   */
+  @Patch('me/preferences')
+  async updatePreferences(
+    @Headers() headers: Record<string, any>,
+    @Query() query: { userId?: string },
+    @Body() body: { preferredLang?: string; devotionalUpdatesEnabled?: boolean },
+  ) {
+    const userId = this.extractUserId(headers, query, body as any);
+    return this.usersService.updatePreferences(userId, body);
+  }
 }
 

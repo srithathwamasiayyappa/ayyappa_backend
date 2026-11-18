@@ -340,5 +340,124 @@ export class UsersService {
       },
     };
   }
+
+  private async ensureBookmarksTable() {
+    try {
+      await this.prisma.$queryRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS \`user_bookmarks\` (
+          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+          \`user_id\` INT NOT NULL,
+          \`item_id\` VARCHAR(100) NOT NULL,
+          \`item_type\` VARCHAR(50) NOT NULL,
+          \`title\` VARCHAR(255) NOT NULL,
+          \`subtitle\` VARCHAR(255) NULL,
+          \`thumbnail_url\` VARCHAR(500) NULL,
+          \`created_at\` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+          INDEX (\`user_id\`),
+          UNIQUE KEY \`user_item_unique\` (\`user_id\`, \`item_id\`, \`item_type\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+    } catch (e) {
+      console.warn('[UsersService] ensureBookmarksTable note:', e);
+    }
+  }
+
+  async getBookmarks(userId: number) {
+    await this.ensureBookmarksTable();
+    try {
+      const rows: any = await this.prisma.$queryRawUnsafe(
+        'SELECT * FROM `user_bookmarks` WHERE `user_id` = ? ORDER BY `id` DESC',
+        userId,
+      );
+      if (Array.isArray(rows)) {
+        return rows.map((r) => ({
+          id: r.item_id || String(r.id),
+          dbId: r.id,
+          title: r.title,
+          subtitle: r.subtitle || undefined,
+          category: r.item_type,
+          thumbnailUrl: r.thumbnail_url || undefined,
+          createdAt: r.created_at,
+        }));
+      }
+    } catch (e) {
+      console.warn('[UsersService] getBookmarks error:', e);
+    }
+    return [];
+  }
+
+  async addBookmark(userId: number, body: { itemId: string; itemType: string; title: string; subtitle?: string; thumbnailUrl?: string }) {
+    await this.ensureBookmarksTable();
+    if (!body.itemId || !body.title) {
+      throw new BadRequestException('itemId and title are required for bookmark');
+    }
+    const itemType = body.itemType || 'temple';
+    await this.prisma.$queryRawUnsafe(
+      `INSERT INTO \`user_bookmarks\` (\`user_id\`, \`item_id\`, \`item_type\`, \`title\`, \`subtitle\`, \`thumbnail_url\`)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE \`title\` = VALUES(\`title\`), \`subtitle\` = VALUES(\`subtitle\`), \`thumbnail_url\` = VALUES(\`thumbnail_url\`)`,
+      userId,
+      body.itemId,
+      itemType,
+      body.title,
+      body.subtitle || null,
+      body.thumbnailUrl || null,
+    );
+    return { success: true, message: 'Bookmark saved successfully.' };
+  }
+
+  async removeBookmark(userId: number, bookmarkId: string) {
+    await this.ensureBookmarksTable();
+    const numId = parseInt(bookmarkId, 10);
+    if (!isNaN(numId)) {
+      await this.prisma.$queryRawUnsafe(
+        'DELETE FROM `user_bookmarks` WHERE `user_id` = ? AND (`id` = ? OR `item_id` = ?)',
+        userId,
+        numId,
+        bookmarkId,
+      );
+    } else {
+      await this.prisma.$queryRawUnsafe(
+        'DELETE FROM `user_bookmarks` WHERE `user_id` = ? AND `item_id` = ?',
+        userId,
+        bookmarkId,
+      );
+    }
+    return { success: true, message: 'Bookmark removed successfully.' };
+  }
+
+  async getPreferences(userId: number) {
+    const user = await this.prisma.appUser.findUnique({
+      where: { id: userId },
+      select: {
+        preferredLang: true,
+        devotionalUpdatesEnabled: true,
+      },
+    });
+    return {
+      preferredLang: user?.preferredLang || 'te',
+      devotionalUpdatesEnabled: user?.devotionalUpdatesEnabled ?? true,
+    };
+  }
+
+  async updatePreferences(userId: number, prefs: { preferredLang?: string; devotionalUpdatesEnabled?: boolean }) {
+    const data: any = {};
+    if (prefs.preferredLang) data.preferredLang = prefs.preferredLang;
+    if (prefs.devotionalUpdatesEnabled !== undefined) data.devotionalUpdatesEnabled = Boolean(prefs.devotionalUpdatesEnabled);
+
+    const updated = await this.prisma.appUser.update({
+      where: { id: userId },
+      data,
+      select: {
+        preferredLang: true,
+        devotionalUpdatesEnabled: true,
+      },
+    });
+    return {
+      success: true,
+      message: 'App preferences updated successfully.',
+      data: updated,
+    };
+  }
 }
 
