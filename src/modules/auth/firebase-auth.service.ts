@@ -114,8 +114,12 @@ export class FirebaseAuthService {
     intent: 'LOGIN' | 'REGISTER';
     fullName?: string;
     preferredLang?: string;
+    role?: 'CUSTOMER' | 'DHARMA_KARTHA';
+    templeName?: string;
+    templeTrustName?: string;
+    templeCity?: string;
   }) {
-    const { idToken, intent, fullName, preferredLang } = params;
+    const { idToken, intent, fullName, preferredLang, role = 'CUSTOMER', templeName, templeTrustName, templeCity } = params;
 
     // 1. Verify token & extract cryptographically signed identity
     const verified = await this.verifyFirebaseIdToken(idToken);
@@ -133,14 +137,110 @@ export class FirebaseAuthService {
       },
     });
 
-    // 3. Apply REGISTER Intent Policy: Strictly prevent duplicate registration
-    if (intent === 'REGISTER') {
-      if (existingUser) {
-        throw new BadRequestException('This mobile number is already registered. Please login.');
+    // Check existing Dharma Kartha status
+    let hasDkAccount = false;
+    if (existingUser) {
+      if (existingUser.addressLine?.startsWith('DK_META:')) {
+        try {
+          const parsed = JSON.parse(existingUser.addressLine.replace('DK_META:', ''));
+          if (parsed.role === 'DHARMA_KARTHA' || parsed.templeName) hasDkAccount = true;
+        } catch {}
       }
+      if (!hasDkAccount) {
+        try {
+          const memCount = await (this.prisma as any).templeMembership.count({
+            where: { userId: existingUser.id },
+          });
+          if (memCount > 0) hasDkAccount = true;
+        } catch {}
+      }
+    }
 
-      const nameToStore = (fullName && fullName.trim()) ? fullName.trim() : 'Devotee';
-      try {
+    // 3. Apply REGISTER Intent Policy based on chosen Role
+    if (intent === 'REGISTER') {
+      if (role === 'DHARMA_KARTHA') {
+        if (hasDkAccount) {
+          throw new BadRequestException('This mobile number is already registered as a Dharma Kartha. Please login.');
+        }
+
+        // If user already exists as Customer, upgrade/add Dharma Kartha profile seamlessly!
+        if (existingUser) {
+          const dkMeta = {
+            role: 'DHARMA_KARTHA',
+            templeName: templeName || '',
+            templeTrustName: templeTrustName || '',
+            templeCity: templeCity || '',
+            registeredAt: new Date().toISOString(),
+          };
+          const updated = await this.prisma.appUser.update({
+            where: { id: existingUser.id },
+            data: {
+              fullName: fullName?.trim() || existingUser.fullName,
+              addressLine: `DK_META:${JSON.stringify(dkMeta)}`,
+              city: templeCity || existingUser.city,
+              district: templeTrustName || existingUser.district,
+              lastActiveAt: new Date(),
+            },
+          });
+
+          return {
+            success: true,
+            message: 'Dharma Kartha (Temple Founder) profile registered successfully!',
+            user: {
+              id: updated.id,
+              phoneNumber: updated.phoneNumber,
+              fullName: updated.fullName,
+              email: updated.email,
+              role: 'DHARMA_KARTHA',
+              templeName,
+              templeTrustName,
+              templeCity,
+            },
+          };
+        }
+
+        // Fresh brand new Dharma Kartha registration
+        const dkMeta = {
+          role: 'DHARMA_KARTHA',
+          templeName: templeName || '',
+          templeTrustName: templeTrustName || '',
+          templeCity: templeCity || '',
+          registeredAt: new Date().toISOString(),
+        };
+
+        const newUser = await this.prisma.appUser.create({
+          data: {
+            phoneNumber: cleanPhone,
+            fullName: fullName?.trim() || 'Dharma Kartha',
+            deviceUuid: `firebase:${uid}`,
+            preferredLang: preferredLang || 'en',
+            addressLine: `DK_META:${JSON.stringify(dkMeta)}`,
+            city: templeCity || null,
+            district: templeTrustName || null,
+            lastActiveAt: new Date(),
+          },
+        });
+
+        return {
+          success: true,
+          message: 'Dharma Kartha account registered successfully! Welcome to Saranam Ayyappa.',
+          user: {
+            id: newUser.id,
+            phoneNumber: newUser.phoneNumber,
+            fullName: newUser.fullName,
+            role: 'DHARMA_KARTHA',
+            templeName,
+            templeTrustName,
+            templeCity,
+          },
+        };
+      } else {
+        // Customer Registration
+        if (existingUser) {
+          throw new BadRequestException('This mobile number is already registered as a Customer. Please login.');
+        }
+
+        const nameToStore = (fullName && fullName.trim()) ? fullName.trim() : 'Devotee';
         const newUser = await this.prisma.appUser.create({
           data: {
             phoneNumber: cleanPhone,
@@ -159,25 +259,29 @@ export class FirebaseAuthService {
             phoneNumber: newUser.phoneNumber,
             fullName: newUser.fullName,
             email: newUser.email,
-            preferredLang: newUser.preferredLang,
-            profileOnboardingStatus: newUser.profileOnboardingStatus,
+            role: 'CUSTOMER',
           },
         };
-      } catch (err: any) {
-        if (err.code === 'P2002') {
-          throw new BadRequestException('This mobile number is already registered. Please proceed to login.');
-        }
-        throw new BadRequestException('Registration could not be completed. Please try again.');
       }
     }
 
-    // 4. Apply LOGIN Intent Policy
+    // 4. Apply LOGIN Intent Policy based on chosen Role
     if (!existingUser) {
-      throw new UnauthorizedException('This mobile number is not registered. Please register your account first.');
+      throw new UnauthorizedException(
+        role === 'DHARMA_KARTHA'
+          ? 'No Dharma Kartha account found with this mobile number. Please register your temple founder profile first.'
+          : 'This mobile number is not registered as a Customer. Please create your account first.'
+      );
     }
 
     if (existingUser.isSuspended) {
       throw new UnauthorizedException('Your devotee account is currently suspended. Please contact temple administration.');
+    }
+
+    if (role === 'DHARMA_KARTHA' && !hasDkAccount) {
+      throw new UnauthorizedException(
+        'This mobile number is registered as a Customer, but not yet registered as a Dharma Kartha. Please register your temple founder account.'
+      );
     }
 
     // Update active timestamp and link Firebase UID if needed
@@ -189,14 +293,34 @@ export class FirebaseAuthService {
       },
     });
 
+    let currentRole = role;
+    let currentTempleName = templeName;
+    let currentTempleTrust = templeTrustName;
+    let currentTempleCity = templeCity;
+
+    if (existingUser.addressLine?.startsWith('DK_META:')) {
+      try {
+        const parsed = JSON.parse(existingUser.addressLine.replace('DK_META:', ''));
+        if (role === 'DHARMA_KARTHA') {
+          currentTempleName = parsed.templeName || currentTempleName;
+          currentTempleTrust = parsed.templeTrustName || currentTempleTrust;
+          currentTempleCity = parsed.templeCity || currentTempleCity;
+        }
+      } catch {}
+    }
+
     return {
       success: true,
-      message: 'Login successful! Welcome to Saranam Ayyappa.',
+      message: `Login successful as ${role === 'DHARMA_KARTHA' ? 'Dharma Kartha (Temple Founder)' : 'Customer'}! Welcome to Saranam Ayyappa.`,
       user: {
         id: updatedUser.id,
         phoneNumber: updatedUser.phoneNumber,
         fullName: updatedUser.fullName,
         email: updatedUser.email,
+        role: currentRole,
+        templeName: currentTempleName,
+        templeTrustName: currentTempleTrust,
+        templeCity: currentTempleCity,
         preferredLang: updatedUser.preferredLang,
         profileOnboardingStatus: updatedUser.profileOnboardingStatus,
       },

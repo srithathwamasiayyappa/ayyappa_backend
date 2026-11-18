@@ -46,7 +46,15 @@ export class AuthController {
    * POST /api/v1/auth/check-phone
    */
   @Post('check-phone')
-  async checkPhone(@Body() body: { phoneNumber: string }) {
+  async checkPhone(@Body() body: { 
+    phoneNumber: string; 
+    intent?: 'LOGIN' | 'REGISTER'; 
+    role?: 'CUSTOMER' | 'DHARMA_KARTHA';
+    fullName?: string;
+    templeName?: string;
+    templeTrustName?: string;
+    templeCity?: string;
+  }) {
     await this.ensureDatabaseOnline();
 
     const { phoneNumber } = body;
@@ -55,33 +63,115 @@ export class AuthController {
     }
 
     const cleanPhone = phoneNumber.trim().replace(/[^0-9]/g, '').slice(-10);
+    const requestedRole = (body.role || 'CUSTOMER').toUpperCase();
+    const reqIntent = body.intent ? body.intent.toUpperCase() : null;
 
-    const user = await this.prisma.appUser.findFirst({
-      where: {
-        OR: [
-          { phoneNumber: cleanPhone },
-          { phoneNumber: `+91${cleanPhone}` },
-          { phoneNumber: `91${cleanPhone}` },
-        ],
-      },
-    });
+    let user = null;
+    let memberships: any[] = [];
+    try {
+      user = await this.prisma.appUser.findFirst({
+        where: {
+          OR: [
+            { phoneNumber: cleanPhone },
+            { phoneNumber: `+91${cleanPhone}` },
+            { phoneNumber: `91${cleanPhone}` },
+          ],
+        },
+      });
 
-    const isRegistered = Boolean(user);
+      if (user) {
+        try {
+          memberships = await (this.prisma as any).templeMembership.findMany({
+            where: { userId: user.id },
+          });
+        } catch {}
+      }
+    } catch (dbErr: any) {
+      this.logger.warn(`Direct DB query failed, attempting health check: ${dbErr?.message || dbErr}`);
+      await this.ensureDatabaseOnline();
+    }
+
+    // Role detection:
+    // User is registered as CUSTOMER if user record exists.
+    // User is registered as DHARMA_KARTHA if user record exists AND:
+    // (memberships exist OR addressLine contains DK_META with role DHARMA_KARTHA).
+    let hasCustomerAccount = Boolean(user);
+    let hasDharmaKarthaAccount = false;
+
+    if (user) {
+      if (memberships && memberships.length > 0) {
+        hasDharmaKarthaAccount = true;
+      } else if (user.addressLine?.startsWith('DK_META:')) {
+        try {
+          const parsed = JSON.parse(user.addressLine.replace('DK_META:', ''));
+          if (parsed.role === 'DHARMA_KARTHA' || parsed.templeName) {
+            hasDharmaKarthaAccount = true;
+          }
+        } catch {}
+      }
+    }
+
+    // Role-specific registration status
+    const isRegisteredForRole = requestedRole === 'DHARMA_KARTHA' ? hasDharmaKarthaAccount : hasCustomerAccount;
     const isSuspended = Boolean(user?.isSuspended);
 
     let message = 'Mobile number verified successfully.';
+    let navigationAction = isRegisteredForRole ? 'LOGIN' : 'REGISTER';
+
     if (isSuspended) {
       message = 'Your devotee account is currently suspended. Please contact temple administration.';
-    } else if (isRegistered) {
-      message = 'Mobile number is registered. OTP sent for login.';
+      navigationAction = 'SUSPENDED';
+    } else if (requestedRole === 'DHARMA_KARTHA') {
+      if (hasDharmaKarthaAccount) {
+        if (reqIntent === 'REGISTER') {
+          message = 'This mobile number is already registered as a Dharma Kartha (Temple Founder). Please proceed to Login.';
+        } else {
+          message = 'Dharma Kartha mobile number verified. Proceeding with Login OTP.';
+        }
+        navigationAction = 'LOGIN';
+      } else {
+        // Not registered as Dharma Kartha yet!
+        if (reqIntent === 'LOGIN') {
+          message = hasCustomerAccount
+            ? 'This mobile number is registered as a Customer, but not as a Dharma Kartha. Please register your temple founder profile first.'
+            : 'No Dharma Kartha account found with this mobile number. Please register your temple founder profile first.';
+        } else {
+          message = 'Mobile number verified. Proceeding with Dharma Kartha registration.';
+        }
+        navigationAction = 'REGISTER';
+      }
     } else {
-      message = 'Mobile number is available. OTP sent for registration.';
+      // Customer Role
+      if (hasCustomerAccount) {
+        if (reqIntent === 'REGISTER') {
+          message = 'This mobile number is already registered as a Customer. Please proceed to Login.';
+        } else {
+          message = 'Customer mobile number verified. Proceeding with Login OTP.';
+        }
+        navigationAction = 'LOGIN';
+      } else {
+        if (reqIntent === 'LOGIN') {
+          message = 'This mobile number is not registered as a Customer yet. Please create your devotee account first.';
+        } else {
+          message = 'Mobile number verified. Proceeding with Customer Registration OTP.';
+        }
+        navigationAction = 'REGISTER';
+      }
     }
 
     return {
-      isRegistered,
+      success: true,
+      isRegistered: isRegisteredForRole,
+      hasCustomerAccount,
+      hasDharmaKarthaAccount,
+      role: requestedRole,
+      templeName: body.templeName ? body.templeName.trim() : undefined,
+      templeTrustName: body.templeTrustName ? body.templeTrustName.trim() : undefined,
+      templeCity: body.templeCity ? body.templeCity.trim() : undefined,
       isSuspended,
       phoneNumber: cleanPhone,
+      navigationAction,
+      redirectTo: isRegisteredForRole ? '/auth-login' : '/auth-register',
       message,
     };
   }
@@ -101,15 +191,23 @@ export class AuthController {
     intent?: 'LOGIN' | 'REGISTER';
     fullName?: string;
     preferredLang?: string;
+    role?: 'CUSTOMER' | 'DHARMA_KARTHA';
+    templeName?: string;
+    templeTrustName?: string;
+    templeCity?: string;
   }) {
     await this.ensureDatabaseOnline();
 
-    const { idToken, intent = 'LOGIN', fullName, preferredLang } = body;
+    const { idToken, intent = 'LOGIN', fullName, preferredLang, role, templeName, templeTrustName, templeCity } = body;
     return this.firebaseAuthService.authenticateWithFirebasePhone({
       idToken,
       intent,
       fullName,
       preferredLang,
+      role,
+      templeName,
+      templeTrustName,
+      templeCity,
     });
   }
 
@@ -781,10 +879,35 @@ export class AuthController {
       }
     }
 
+    // Parse dynamic role and metadata if stored in addressLine
+    let userRole = 'CUSTOMER';
+    let parsedTempleName = '';
+    let parsedTempleTrust = user.district || '';
+    let parsedTempleCity = user.city || '';
+    let parsedTempleState = user.state || '';
+    let userDisplayAddress = user.addressLine || '';
+
+    if (user.addressLine?.startsWith('DK_META:')) {
+      try {
+        const parsed = JSON.parse(user.addressLine.replace('DK_META:', ''));
+        userRole = parsed.role || 'DHARMA_KARTHA';
+        parsedTempleName = parsed.templeName || '';
+        parsedTempleTrust = parsed.templeTrustName || parsedTempleTrust;
+        parsedTempleCity = parsed.templeCity || parsedTempleCity;
+        parsedTempleState = parsed.templeState || parsedTempleState;
+        userDisplayAddress = parsed.rawAddress || '';
+      } catch {}
+    }
+
     return {
       success: true,
       user: {
         id: user.id,
+        role: userRole,
+        templeName: parsedTempleName,
+        templeTrustName: parsedTempleTrust,
+        templeCity: parsedTempleCity,
+        templeState: parsedTempleState,
         fullName: user.fullName || '',
         phoneNumber: user.phoneNumber || '',
         email: user.email || '',
@@ -798,7 +921,7 @@ export class AuthController {
         city: user.city || '',
         district: user.district || '',
         state: user.state || '',
-        addressLine: user.addressLine || '',
+        addressLine: userDisplayAddress,
         preferredLang: user.preferredLang || 'te',
         profileOnboardingStatus: user.profileOnboardingStatus,
         createdAt: user.createdAt,
@@ -875,6 +998,28 @@ export class AuthController {
       if (foundNakshatra) resolvedNakshatraId = foundNakshatra.id;
     }
 
+    const { role, templeName, templeTrustName, templeCity, templeState } = body as any;
+    let newAddressLine = address ? address.trim() : existingUser.addressLine;
+    let newDistrict = existingUser.district;
+    let newState = existingUser.state;
+
+    // Pack Dharma Kartha dynamic metadata into addressLine / district / state safely if role is DHARMA_KARTHA
+    if (role === 'DHARMA_KARTHA' || templeName || templeTrustName) {
+      const dkMetadata = {
+        role: role || 'DHARMA_KARTHA',
+        templeName: templeName || '',
+        templeTrustName: templeTrustName || '',
+        templeCity: templeCity || city || '',
+        templeState: templeState || '',
+        rawAddress: address ? address.trim() : (existingUser.addressLine?.startsWith('DK_META:') ? '' : existingUser.addressLine),
+      };
+      newAddressLine = `DK_META:${JSON.stringify(dkMetadata)}`;
+      if (templeTrustName) newDistrict = templeTrustName.slice(0, 100);
+      if (templeState) newState = templeState.slice(0, 100);
+    } else if (role === 'CUSTOMER' && address) {
+      newAddressLine = address.trim();
+    }
+
     const updatedUser = await this.prisma.appUser.update({
       where: { id: existingUser.id },
       data: {
@@ -885,7 +1030,9 @@ export class AuthController {
         ...(resolvedRashiId ? { rashiId: resolvedRashiId } : {}),
         ...(resolvedNakshatraId ? { nakshatraId: resolvedNakshatraId } : {}),
         ...(city ? { city: city.trim() } : {}),
-        ...(address ? { addressLine: address.trim() } : {}),
+        ...(newAddressLine ? { addressLine: newAddressLine } : {}),
+        ...(newDistrict ? { district: newDistrict } : {}),
+        ...(newState ? { state: newState } : {}),
         profileOnboardingStatus: 'COMPLETED',
         profileCompletedAt: new Date(),
       },
@@ -915,11 +1062,36 @@ export class AuthController {
       }
     }
 
+    // Parse dynamic role and metadata from updated user
+    let userRole = 'CUSTOMER';
+    let parsedTempleName = '';
+    let parsedTempleTrust = updatedUser.district || '';
+    let parsedTempleCity = updatedUser.city || '';
+    let parsedTempleState = updatedUser.state || '';
+    let userDisplayAddress = updatedUser.addressLine || '';
+
+    if (updatedUser.addressLine?.startsWith('DK_META:')) {
+      try {
+        const parsed = JSON.parse(updatedUser.addressLine.replace('DK_META:', ''));
+        userRole = parsed.role || 'DHARMA_KARTHA';
+        parsedTempleName = parsed.templeName || '';
+        parsedTempleTrust = parsed.templeTrustName || parsedTempleTrust;
+        parsedTempleCity = parsed.templeCity || parsedTempleCity;
+        parsedTempleState = parsed.templeState || parsedTempleState;
+        userDisplayAddress = parsed.rawAddress || '';
+      } catch {}
+    }
+
     return {
       success: true,
-      message: 'Devotee profile updated successfully.',
+      message: 'Profile updated successfully.',
       user: {
         id: updatedUser.id,
+        role: userRole,
+        templeName: parsedTempleName,
+        templeTrustName: parsedTempleTrust,
+        templeCity: parsedTempleCity,
+        templeState: parsedTempleState,
         fullName: updatedUser.fullName,
         phoneNumber: updatedUser.phoneNumber,
         email: updatedUser.email,
@@ -931,7 +1103,7 @@ export class AuthController {
         nakshatra: returnNakshatraName,
         nakshatraId: updatedUser.nakshatraId,
         city: updatedUser.city,
-        addressLine: updatedUser.addressLine,
+        addressLine: userDisplayAddress,
         profileOnboardingStatus: updatedUser.profileOnboardingStatus,
       },
     };
