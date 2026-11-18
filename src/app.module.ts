@@ -13,6 +13,7 @@ import { MasterModule } from './modules/master/master.module';
 import { UsersModule } from './modules/users/users.module';
 import { DharmaKarthaModule } from './modules/dharma-kartha/dharma-kartha.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { TemplesModule } from './modules/temples/temples.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     UsersModule,
     DharmaKarthaModule,
     NotificationsModule,
+    TemplesModule,
   ],
 })
 export class AppModule {}
