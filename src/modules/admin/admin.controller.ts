@@ -15,6 +15,7 @@ import {
   HttpStatus
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { TranslationService } from './translation.service';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -38,7 +39,10 @@ export const activeAdminSessions = new Map<string, ActiveSession>();
 
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly translationService: TranslationService,
+  ) {}
 
   // 1. Admin Authentication & Session Security (Bcrypt Salt 12 + Sliding-Window Rate Limiter)
   @Post('auth/login')
@@ -2220,6 +2224,160 @@ export class AdminController {
     return {
       success: true,
       message: 'Notification deleted successfully.'
+    };
+  }
+
+  // Google Cloud Translation Advanced (v3) Endpoints
+  @Post('translate')
+  async translateFields(@Body() body: any) {
+    if (!body || !body.fields || Object.keys(body.fields).length === 0) {
+      throw new BadRequestException('Fields to translate are required');
+    }
+    return this.translationService.translateFields({
+      module: body.module || 'general',
+      sourceLang: body.sourceLang || 'en',
+      targetLangs: body.targetLangs || ['te', 'kn', 'ta', 'hi'],
+      fields: body.fields,
+      htmlFields: body.htmlFields || [],
+      recordId: body.recordId
+    });
+  }
+
+  @Post('translate/save')
+  async saveTranslations(@Body() body: {
+    module: string;
+    recordId?: number | string;
+    translations: {
+      [langCode: string]: { [field: string]: string };
+    };
+  }) {
+    if (!body || !body.translations) {
+      throw new BadRequestException('Translation payload required');
+    }
+
+    const { module, recordId, translations } = body;
+    let savedCount = 0;
+
+    // Fetch existing languages from DB
+    const languages = await this.prisma.language.findMany();
+    const langMap = new Map<string, number>();
+    for (const l of languages) {
+      langMap.set(l.code.toLowerCase(), l.id);
+    }
+
+    for (const [langCode, fieldValues] of Object.entries(translations)) {
+      const langId = langMap.get(langCode.toLowerCase());
+      if (!langId && (module === 'categories' || module === 'festivals' || module === 'panchangam')) {
+        continue;
+      }
+
+      if (module === 'categories' && recordId && langId) {
+        const catId = typeof recordId === 'string' ? parseInt(recordId, 10) : recordId;
+        if (!isNaN(catId)) {
+          const title = fieldValues.title || fieldValues.name || '';
+          const description = fieldValues.description || '';
+          if (title) {
+            await this.prisma.contentTranslation.upsert({
+              where: {
+                categoryId_languageId: {
+                  categoryId: catId,
+                  languageId: langId,
+                },
+              },
+              update: {
+                title,
+                description,
+              },
+              create: {
+                categoryId: catId,
+                languageId: langId,
+                title,
+                description,
+              },
+            });
+            savedCount++;
+          }
+        }
+      } else if (module === 'festivals' && recordId && langId) {
+        const festId = typeof recordId === 'string' ? parseInt(recordId, 10) : recordId;
+        if (!isNaN(festId)) {
+          const name = fieldValues.name || fieldValues.title || '';
+          const description = fieldValues.description || '';
+          if (name) {
+            await this.prisma.festivalTranslation.upsert({
+              where: {
+                festivalId_languageId: {
+                  festivalId: festId,
+                  languageId: langId,
+                },
+              },
+              update: {
+                name,
+                description,
+              },
+              create: {
+                festivalId: festId,
+                languageId: langId,
+                name,
+                description,
+              },
+            });
+            savedCount++;
+          }
+        }
+      } else if (module === 'cms' && recordId) {
+        const pageKey = String(recordId).toLowerCase();
+        const settingKey = `cms_${pageKey}_${langCode.toLowerCase()}`;
+        await this.prisma.appSetting.upsert({
+          where: { key: settingKey },
+          update: {
+            value: JSON.stringify(fieldValues),
+            description: `CMS translation for ${pageKey} in ${langCode.toUpperCase()}`,
+          },
+          create: {
+            key: settingKey,
+            value: JSON.stringify(fieldValues),
+            description: `CMS translation for ${pageKey} in ${langCode.toUpperCase()}`,
+          },
+        });
+        savedCount++;
+      } else if (module === 'ticker' || module === 'branding') {
+        const settingKey = `localized_${module}_${langCode.toLowerCase()}`;
+        await this.prisma.appSetting.upsert({
+          where: { key: settingKey },
+          update: {
+            value: JSON.stringify(fieldValues),
+            description: `Localized ${module} in ${langCode.toUpperCase()}`,
+          },
+          create: {
+            key: settingKey,
+            value: JSON.stringify(fieldValues),
+            description: `Localized ${module} in ${langCode.toUpperCase()}`,
+          },
+        });
+        savedCount++;
+      } else if (module === 'temple_types' && recordId) {
+        const typeKey = `temple_type_${recordId}_${langCode.toLowerCase()}`;
+        await this.prisma.appSetting.upsert({
+          where: { key: typeKey },
+          update: {
+            value: JSON.stringify(fieldValues),
+            description: `Localized temple type ${recordId} in ${langCode.toUpperCase()}`,
+          },
+          create: {
+            key: typeKey,
+            value: JSON.stringify(fieldValues),
+            description: `Localized temple type ${recordId} in ${langCode.toUpperCase()}`,
+          },
+        });
+        savedCount++;
+      }
+    }
+
+    return {
+      success: true,
+      savedCount,
+      message: `Successfully saved ${savedCount} localized records into MariaDB!`,
     };
   }
 }
