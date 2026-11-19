@@ -395,6 +395,12 @@ export class DharmaKarthaController {
     return this.dkService.reviewTempleAsAdmin(parseInt(id, 10), body, adminEmail);
   }
 
+  // POST /api/v1/dharma-kartha/upload-image - Upload temple hero/sanctum image
+  @Post('upload-image')
+  async uploadImage(@Body() body: any) {
+    return this.dkService.uploadImage(body);
+  }
+
   // 4. GET /api/v1/dharma-kartha/temples/:id (Fetch Details of Authorized Temple)
   @Get('temples/:id')
   async getTempleDetails(

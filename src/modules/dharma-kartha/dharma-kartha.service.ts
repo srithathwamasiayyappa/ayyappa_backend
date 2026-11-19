@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Verified Seed Temples for Saranam Ayyappa Devotional Portal
 export const SEED_TEMPLES = [
@@ -2259,6 +2261,55 @@ export class DharmaKarthaService {
         success: false,
         statusCode: 404,
         message: `Temple #${templeId} not found in database.`,
+      };
+    }
+  }
+
+  // POST /api/v1/dharma-kartha/upload-image - Upload temple image (Base64 data or data URI)
+  async uploadImage(body: { image: string; fileName?: string; mimeType?: string }) {
+    if (!body?.image) {
+      return { success: false, message: 'No image data provided' };
+    }
+
+    try {
+      const candidates = [
+        path.join(process.cwd(), 'apps', 'api', 'uploads'),
+        path.join(__dirname, '..', '..', '..', 'uploads'),
+        path.join(process.cwd(), 'uploads'),
+      ];
+      const baseDir = candidates.find((dir) => fs.existsSync(dir)) || candidates[0];
+      const templesDir = path.join(baseDir, 'temples');
+      if (!fs.existsSync(templesDir)) {
+        fs.mkdirSync(templesDir, { recursive: true });
+      }
+
+      let rawBase64 = body.image;
+      let ext = 'jpg';
+      if (rawBase64.includes(';base64,')) {
+        const parts = rawBase64.split(';base64,');
+        const header = parts[0];
+        rawBase64 = parts[1];
+        if (header.includes('png')) ext = 'png';
+        else if (header.includes('webp')) ext = 'webp';
+      }
+
+      const fileName = `temple_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
+      const filePath = path.join(templesDir, fileName);
+
+      fs.writeFileSync(filePath, Buffer.from(rawBase64, 'base64'));
+
+      const publicUrl = `/uploads/temples/${fileName}`;
+
+      return {
+        success: true,
+        url: publicUrl,
+        fileName,
+      };
+    } catch {
+      // In case of any filesystem permission limitation, return the base64 data URI directly
+      return {
+        success: true,
+        url: body.image,
       };
     }
   }
