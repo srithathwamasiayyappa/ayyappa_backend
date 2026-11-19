@@ -281,7 +281,7 @@ export class HomeController {
     }
 
     const fallbackServices = [
-      { id: 'pooja', serviceId: 'pooja', title: 'Pooja Vidhanam', sub: 'Sacred Ritual Guide', icon: 'Flame', url: '/subcategories', displayOrder: 1 },
+      { id: 'pooja', serviceId: 'pooja', title: 'Pooja Vidhanam', sub: 'Step-by-step sacred rituals', icon: 'Flame', url: '/subcategories', displayOrder: 1 },
       { id: 'stotras', serviceId: 'stotras', title: 'Divine Stotras', sub: 'Sacred Hymns & Chants', icon: 'BookOpen', url: '/stotras', displayOrder: 2 },
       { id: 'slokas', serviceId: 'slokas', title: 'Daily Slokas', sub: 'Verses for Meditation', icon: 'Scroll', url: '/slokas', displayOrder: 3 },
       { id: 'songs', serviceId: 'songs', title: 'Bhajans & Songs', sub: 'Devotional Melodies', icon: 'Music', url: '/songs', displayOrder: 4 },

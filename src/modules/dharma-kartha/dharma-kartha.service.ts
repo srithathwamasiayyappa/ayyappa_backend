@@ -190,9 +190,11 @@ export class DharmaKarthaService {
     role: string;
     status: string;
   }> = [
-    // Pre-seed an authorized test membership for devotee #1 (Vinod) with specific authorized temples
+    // Authorized test memberships
     { id: 1, userId: 1, templeId: 2, role: 'OWNER', status: 'APPROVED' },
     { id: 2, userId: 1, templeId: 4, role: 'OWNER', status: 'APPROVED' },
+    { id: 3, userId: 2, templeId: 1, role: 'OWNER', status: 'APPROVED' },
+    { id: 4, userId: 3, templeId: 6, role: 'OWNER', status: 'APPROVED' },
   ];
 
   private devTemples: Array<any> = [...SEED_TEMPLES];
@@ -1205,6 +1207,54 @@ export class DharmaKarthaService {
     }
   }
 
+  // GET /api/v1/dharma-kartha/festivals/:id - View Festival by ID
+  async getOwnerFestivalById(userId: number, festivalId: number): Promise<any> {
+    try {
+      const f = await (this.prisma as any).templeFestival.findUnique({
+        where: { id: festivalId },
+        include: {
+          temple: { select: { id: true, name: true, city: true, state: true } },
+        },
+      });
+      if (!f) {
+        return { success: false, statusCode: 404, message: 'Festival not found' };
+      }
+      return {
+        success: true,
+        festival: {
+          id: f.id,
+          templeId: f.templeId,
+          name: f.name,
+          period: f.period,
+          description: f.description || '',
+          category: f.category || 'MAHOTSAVAM',
+          specialPoojaInfo: f.specialPoojaInfo || '',
+          status: f.status || 'PUBLISHED',
+          isAnnual: f.isAnnual,
+          templeName: f.temple?.name || 'Sri Dharma Sastha Ayyappa Swamy Temple',
+          city: f.temple?.city || '',
+          state: f.temple?.state || '',
+          createdAt: f.createdAt,
+        },
+      };
+    } catch {
+      const fest = this.devFestivals.find((item) => item.id === festivalId);
+      if (!fest) {
+        return { success: false, statusCode: 404, message: 'Festival not found' };
+      }
+      const temple = this.devTemples.find((t) => t.id === fest.templeId);
+      return {
+        success: true,
+        festival: {
+          ...fest,
+          templeName: temple?.name || 'Sri Dharma Sastha Ayyappa Swamy Temple',
+          city: temple?.city || '',
+          state: temple?.state || '',
+        },
+      };
+    }
+  }
+
   // POST /api/v1/dharma-kartha/festivals - Add temple festival
   async addTempleFestival(userId: number, body: any): Promise<any> {
     const templeId = Number(body.templeId) || 1;
@@ -1370,6 +1420,56 @@ export class DharmaKarthaService {
     }
   }
 
+  // GET /api/v1/dharma-kartha/events/:id - View Event by ID
+  async getOwnerEventById(userId: number, eventId: number): Promise<any> {
+    try {
+      const e = await (this.prisma as any).templeEvent.findUnique({
+        where: { id: eventId },
+        include: {
+          temple: { select: { id: true, name: true, city: true, state: true } },
+        },
+      });
+      if (!e) {
+        return { success: false, statusCode: 404, message: 'Event not found' };
+      }
+      return {
+        success: true,
+        event: {
+          id: e.id,
+          templeId: e.templeId,
+          title: e.title,
+          description: e.description || '',
+          startDate: e.startDate,
+          endDate: e.endDate,
+          timeInfo: e.timeInfo || '',
+          location: e.location || '',
+          imageUrl: e.imageUrl || '',
+          category: e.category || 'SEVA_PROGRAMME',
+          status: e.status || 'PUBLISHED',
+          templeName: e.temple?.name || 'Sri Dharma Sastha Ayyappa Swamy Temple',
+          city: e.temple?.city || '',
+          state: e.temple?.state || '',
+          createdAt: e.createdAt,
+        },
+      };
+    } catch {
+      const evt = this.devEvents.find((item) => item.id === eventId);
+      if (!evt) {
+        return { success: false, statusCode: 404, message: 'Event not found' };
+      }
+      const temple = this.devTemples.find((t) => t.id === evt.templeId);
+      return {
+        success: true,
+        event: {
+          ...evt,
+          templeName: temple?.name || 'Sri Dharma Sastha Ayyappa Swamy Temple',
+          city: temple?.city || '',
+          state: temple?.state || '',
+        },
+      };
+    }
+  }
+
   // POST /api/v1/dharma-kartha/events - Add temple event
   async addTempleEvent(userId: number, body: any): Promise<any> {
     const templeId = Number(body.templeId) || 1;
@@ -1442,6 +1542,8 @@ export class DharmaKarthaService {
       if (body.startDate) updateData.startDate = new Date(body.startDate);
       if (body.endDate) updateData.endDate = new Date(body.endDate);
       if (body.location !== undefined) updateData.location = body.location;
+      if (body.timeInfo !== undefined) updateData.timeInfo = body.timeInfo;
+      if (body.imageUrl !== undefined) updateData.imageUrl = body.imageUrl;
       if (body.status) updateData.status = body.status;
 
       const updated = await (this.prisma as any).templeEvent.update({
@@ -1617,6 +1719,54 @@ export class DharmaKarthaService {
     }
   }
 
+  // GET /api/v1/dharma-kartha/media/:id - View Media by ID
+  async getOwnerMediaById(userId: number, mediaId: number): Promise<any> {
+    try {
+      const m = await (this.prisma as any).templeMedia.findUnique({
+        where: { id: mediaId },
+        include: {
+          temple: { select: { id: true, name: true, city: true, state: true } },
+        },
+      });
+      if (!m) {
+        return { success: false, statusCode: 404, message: 'Media not found' };
+      }
+      return {
+        success: true,
+        media: {
+          id: m.id,
+          templeId: m.templeId,
+          title: m.title,
+          caption: m.caption || '',
+          mediaUrl: m.mediaUrl,
+          type: m.type,
+          category: 'Temple Sacred Media',
+          isApproved: m.isApproved,
+          status: m.isApproved ? 'PUBLISHED' : 'PENDING_APPROVAL',
+          templeName: m.temple?.name || 'Sri Dharma Sastha Ayyappa Swamy Temple',
+          city: m.temple?.city || '',
+          state: m.temple?.state || '',
+          createdAt: m.createdAt,
+        },
+      };
+    } catch {
+      const item = this.devMedia.find((m) => m.id === mediaId);
+      if (!item) {
+        return { success: false, statusCode: 404, message: 'Media not found' };
+      }
+      const temple = this.devTemples.find((t) => t.id === item.templeId);
+      return {
+        success: true,
+        media: {
+          ...item,
+          templeName: temple?.name || 'Sri Dharma Sastha Ayyappa Swamy Temple',
+          city: temple?.city || '',
+          state: temple?.state || '',
+        },
+      };
+    }
+  }
+
   // POST /api/v1/dharma-kartha/media - Upload/submit media
   async uploadTempleMedia(userId: number, body: any): Promise<any> {
     const templeId = Number(body.templeId) || 1;
@@ -1679,12 +1829,15 @@ export class DharmaKarthaService {
     }
   }
 
-  // PATCH /api/v1/dharma-kartha/media/:id - Edit caption/category
+  // PATCH /api/v1/dharma-kartha/media/:id - Edit caption/category/title/url
   async updateTempleMedia(userId: number, mediaId: number, body: any): Promise<any> {
     try {
       const updateData: any = {};
       if (body.caption !== undefined) updateData.caption = body.caption;
       if (body.title !== undefined) updateData.title = body.title;
+      if (body.mediaUrl !== undefined) updateData.mediaUrl = body.mediaUrl;
+      if (body.type !== undefined) updateData.type = body.type;
+      if (body.isApproved !== undefined) updateData.isApproved = Boolean(body.isApproved);
 
       const updated = await (this.prisma as any).templeMedia.update({
         where: { id: mediaId },
@@ -2312,5 +2465,122 @@ export class DharmaKarthaService {
         url: body.image,
       };
     }
+  }
+
+  // Admin Portal: Retrieve all registered Dharma Karthas along with their full Temple details,
+  // including events, festivals, contact, timings & aarthi, gallery, speciality, and about.
+  async getAdminDharmaKarthasWithDetails(search?: string) {
+    const knownUsers = [
+      {
+        id: 1,
+        fullName: 'Vinod Goexperts (Dharma Kartha)',
+        phoneNumber: '+91 98480 22338',
+        email: 'vinod@goexperts.org',
+        city: 'Hyderabad',
+        state: 'Telangana',
+        profileImageUrl: '/images/ayyappa-icon.jpg',
+        createdAt: '2026-01-10T10:00:00.000Z',
+        isSuspended: false,
+        membershipRole: 'OWNER',
+        membershipStatus: 'APPROVED',
+      },
+      {
+        id: 2,
+        fullName: 'Bharath Ch (Dharma Kartha)',
+        phoneNumber: '+91 99887 76655',
+        email: 'bharath@ayyappa.org',
+        city: 'Hyderabad',
+        state: 'Telangana',
+        profileImageUrl: '/images/ayyappa-icon.jpg',
+        createdAt: '2026-02-15T09:30:00.000Z',
+        isSuspended: false,
+        membershipRole: 'OWNER',
+        membershipStatus: 'APPROVED',
+      },
+      {
+        id: 3,
+        fullName: 'Sri Swami Ramananda (Trustee)',
+        phoneNumber: '+91 91234 56789',
+        email: 'ramananda@kanakadurgatrust.in',
+        city: 'Vijayawada',
+        state: 'Andhra Pradesh',
+        profileImageUrl: '/images/ayyappa-icon.jpg',
+        createdAt: '2026-03-01T11:15:00.000Z',
+        isSuspended: false,
+        membershipRole: 'OWNER',
+        membershipStatus: 'APPROVED',
+      },
+    ];
+
+    const records = knownUsers.map((u) => {
+      const userMemberships = this.devMemberships.filter((m) => m.userId === u.id);
+      const temples = userMemberships.map((m) => {
+        const t = this.devTemples.find((temple) => temple.id === m.templeId);
+        if (!t) return null;
+
+        const timings = this.devTimings.filter((tm) => tm.templeId === t.id);
+        const festivals = this.devFestivals.filter((f) => f.templeId === t.id);
+        const events = this.devEvents.filter((e) => e.templeId === t.id);
+        const gallery = this.devMedia.filter((media) => media.templeId === t.id);
+
+        return {
+          id: t.id,
+          slug: t.slug,
+          name: t.name,
+          alternateName: t.alternateName || '',
+          primaryDeity: t.primaryDeity,
+          shortDescription: t.shortDescription || '',
+          about: t.about || '',
+          history: t.history || '',
+          speciality: t.speciality || '',
+          // Official Administrative Contact
+          officePhone: t.officePhone || '',
+          officialEmail: t.officialEmail || '',
+          officialWebsite: t.officialWebsite || '',
+          address: t.address || '',
+          city: t.city,
+          district: t.district || '',
+          state: t.state,
+          country: t.country || 'India',
+          pincode: t.pincode || '',
+          mapsUrl: t.mapsUrl || '',
+          // Media & Imagery
+          heroImageUrl: t.heroImageUrl || '',
+          gopuramImageUrl: t.gopuramImageUrl || '',
+          status: t.status || 'PUBLISHED',
+          isVerified: t.isVerified ?? true,
+          membershipRole: m.role,
+          membershipStatus: m.status,
+          // Sacred Child Modules
+          timings,
+          festivals,
+          events,
+          gallery,
+        };
+      }).filter(Boolean);
+
+      return {
+        ...u,
+        temples,
+      };
+    });
+
+    if (search) {
+      const q = search.toLowerCase().trim();
+      return records.filter((r) =>
+        r.fullName.toLowerCase().includes(q) ||
+        r.phoneNumber.includes(q) ||
+        r.email.toLowerCase().includes(q) ||
+        r.city.toLowerCase().includes(q) ||
+        r.temples.some((t: any) =>
+          t.name.toLowerCase().includes(q) ||
+          t.primaryDeity.toLowerCase().includes(q) ||
+          t.city.toLowerCase().includes(q) ||
+          t.state.toLowerCase().includes(q)
+        )
+      );
+    }
+
+    return records;
   }
 }

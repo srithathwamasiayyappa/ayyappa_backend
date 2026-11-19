@@ -63,8 +63,8 @@ export class MasterController {
   }
 
   @Get('deities')
-  async getDeities() {
-    const deities = await this.masterService.getDeities();
+  async getDeities(@Query('lang') lang?: string) {
+    const deities = await this.masterService.getDeities(lang || 'te');
     return {
       success: true,
       data: deities,
