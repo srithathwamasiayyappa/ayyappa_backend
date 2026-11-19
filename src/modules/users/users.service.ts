@@ -50,38 +50,7 @@ export class UsersService {
     });
 
     if (!user) {
-      // Devotee record wasn't found by ID -- fallback to first available devotee user
-      user = await this.prisma.appUser.findFirst({
-        include: {
-          rashi: {
-            include: {
-              translations: {
-                where: { language: { code: lang } },
-              },
-            },
-          },
-          nakshatra: {
-            include: {
-              translations: {
-                where: { language: { code: lang } },
-              },
-            },
-          },
-        },
-      });
-    }
-
-    if (!user) {
-      // Auto-provision primary devotee record in MariaDB
-      const created = await this.prisma.appUser.create({
-        data: {
-          phoneNumber: '6302759527',
-          fullName: 'Vinod Kumar',
-          preferredLang: lang || 'te',
-          lastActiveAt: new Date(),
-        },
-      });
-      return this.getProfile(created.id, lang);
+      return null;
     }
 
     const completionPercentage = this.calculateCompletionPercentage(user);
@@ -130,18 +99,7 @@ export class UsersService {
       });
 
       if (!user) {
-        user = await this.prisma.appUser.findFirst();
-      }
-
-      if (!user) {
-        user = await this.prisma.appUser.create({
-          data: {
-            phoneNumber: dto.phoneNumber ? dto.phoneNumber.replace(/[^0-9]/g, '').slice(-10) : '6302759527',
-            fullName: dto.fullName?.trim() || 'Vinod Kumar',
-            preferredLang: dto.preferredLang || 'te',
-            lastActiveAt: new Date(),
-          },
-        });
+        throw new BadRequestException('Devotee user not found.');
       }
 
       const targetUserId = user.id;
@@ -155,7 +113,9 @@ export class UsersService {
       if (dto.profileImageUrl !== undefined) {
         updateData.profileImageUrl = dto.profileImageUrl ? dto.profileImageUrl.trim() : null;
       }
-      if (dto.gender !== undefined) updateData.gender = dto.gender;
+      if (dto.gender !== undefined) {
+        updateData.gender = dto.gender ? String(dto.gender).trim() : null;
+      }
       if (dto.addressLine !== undefined) updateData.addressLine = dto.addressLine;
       if (dto.state !== undefined) updateData.state = dto.state;
       if (dto.district !== undefined) updateData.district = dto.district;
@@ -169,13 +129,42 @@ export class UsersService {
       if (dto.dateOfBirth !== undefined) {
         if (!dto.dateOfBirth) {
           updateData.dateOfBirth = null;
-        } else if (dto.dateOfBirth instanceof Date) {
-          updateData.dateOfBirth = !isNaN(dto.dateOfBirth.getTime()) ? dto.dateOfBirth : null;
-        } else if (typeof dto.dateOfBirth === 'string' && dto.dateOfBirth.trim()) {
-          const parsed = new Date(dto.dateOfBirth.trim());
-          updateData.dateOfBirth = !isNaN(parsed.getTime()) ? parsed : null;
         } else {
-          updateData.dateOfBirth = null;
+          let dateObj: Date | null = null;
+          if (dto.dateOfBirth instanceof Date) {
+            dateObj = !isNaN(dto.dateOfBirth.getTime()) ? dto.dateOfBirth : null;
+          } else if (typeof dto.dateOfBirth === 'string') {
+            const raw = dto.dateOfBirth.trim();
+            // Handle ISO YYYY-MM-DD
+            if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+              dateObj = new Date(raw.split('T')[0] + 'T00:00:00.000Z');
+            } else {
+              const monthsShort = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+              const parts = raw.split(/[\s\-\/]+/);
+              if (parts.length === 3) {
+                const p0 = parseInt(parts[0], 10);
+                const mIdx = isNaN(Number(parts[1]))
+                  ? monthsShort.indexOf(parts[1].toLowerCase().slice(0, 3))
+                  : parseInt(parts[1], 10) - 1;
+                const p2 = parseInt(parts[2], 10);
+
+                if (p2 > 1000 && !isNaN(p0) && mIdx >= 0) {
+                  // DD Mon YYYY
+                  dateObj = new Date(Date.UTC(p2, mIdx, p0));
+                } else if (p0 > 1000 && !isNaN(p2) && mIdx >= 0) {
+                  // YYYY Mon DD
+                  dateObj = new Date(Date.UTC(p0, mIdx, p2));
+                }
+              }
+              if (!dateObj || isNaN(dateObj.getTime())) {
+                const fallbackParsed = new Date(raw);
+                if (!isNaN(fallbackParsed.getTime())) {
+                  dateObj = fallbackParsed;
+                }
+              }
+            }
+          }
+          updateData.dateOfBirth = dateObj && !isNaN(dateObj.getTime()) ? dateObj : null;
         }
       }
 
@@ -213,33 +202,9 @@ export class UsersService {
       }
 
       return this.getProfile(targetUserId, dto.lang || user.preferredLang || 'te');
-    } catch (topErr) {
-      console.warn('[UsersService] Database unavailable during updateProfile, returning fallback profile:', topErr);
-      return {
-        id: userId,
-        phoneNumber: dto.phoneNumber || '6302759527',
-        fullName: dto.fullName?.trim() || 'Vinod Kumar',
-        email: dto.email || null,
-        preferredLang: dto.preferredLang || 'te',
-        dateOfBirth: dto.dateOfBirth || '1985-08-15',
-        gender: dto.gender || 'Male',
-        rashiId: dto.rashiId ? Number(dto.rashiId) : 10,
-        rashiName: 'Makara (Capricorn)',
-        nakshatraId: dto.nakshatraId ? Number(dto.nakshatraId) : 21,
-        nakshatraName: 'Uttareashada',
-        profileImageUrl: dto.profileImageUrl || null,
-        addressLine: dto.addressLine || null,
-        state: dto.state || null,
-        district: dto.district || null,
-        city: dto.city || null,
-        pincode: dto.pincode || null,
-        devotionalUpdatesEnabled: true,
-        profileOnboardingStatus: 'COMPLETED',
-        profileCompletedAt: new Date(),
-        completionPercentage: 100,
-        devoteeSince: 'Nov 2026',
-        isVerifiedPhone: true,
-      };
+    } catch (topErr: any) {
+      console.error('[UsersService] Error during updateProfile:', topErr?.message || topErr);
+      throw new BadRequestException(topErr?.message || 'Failed to update devotee profile in database.');
     }
   }
 
@@ -255,17 +220,7 @@ export class UsersService {
       where: { id: userId },
     });
     if (!user) {
-      user = await this.prisma.appUser.findFirst();
-    }
-    if (!user) {
-      user = await this.prisma.appUser.create({
-        data: {
-          phoneNumber: '6302759527',
-          fullName: 'Vinod Kumar',
-          preferredLang: 'te',
-          lastActiveAt: new Date(),
-        },
-      });
+      throw new BadRequestException('Devotee user not found.');
     }
     const targetUserId = user.id;
 
