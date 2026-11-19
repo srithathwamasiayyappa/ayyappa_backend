@@ -179,6 +179,17 @@ export class DharmaKarthaController {
     return this.dkService.getOwnerFestivals(userId, templeId);
   }
 
+  // GET /api/v1/dharma-kartha/festivals/:id (View Festival by ID)
+  @Get('festivals/:id')
+  async getFestivalById(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
+    @Param('id') id: string,
+  ) {
+    const userId = this.resolveUserId(headers, query);
+    return this.dkService.getOwnerFestivalById(userId, parseInt(id, 10));
+  }
+
   // POST /api/v1/dharma-kartha/festivals
   @Post('festivals')
   async addFestival(
@@ -230,6 +241,17 @@ export class DharmaKarthaController {
     const userId = this.resolveUserId(headers, query);
     const templeId = query.templeId ? parseInt(query.templeId, 10) : undefined;
     return this.dkService.getOwnerEvents(userId, templeId);
+  }
+
+  // GET /api/v1/dharma-kartha/events/:id (View Event by ID)
+  @Get('events/:id')
+  async getEventById(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
+    @Param('id') id: string,
+  ) {
+    const userId = this.resolveUserId(headers, query);
+    return this.dkService.getOwnerEventById(userId, parseInt(id, 10));
   }
 
   // POST /api/v1/dharma-kartha/events
@@ -299,6 +321,17 @@ export class DharmaKarthaController {
     const userId = this.resolveUserId(headers, query);
     const templeId = query.templeId ? parseInt(query.templeId, 10) : undefined;
     return this.dkService.getOwnerMedia(userId, templeId, query.status);
+  }
+
+  // GET /api/v1/dharma-kartha/media/:id (View Media by ID)
+  @Get('media/:id')
+  async getMediaById(
+    @Headers() headers: Record<string, string>,
+    @Query() query: any,
+    @Param('id') id: string,
+  ) {
+    const userId = this.resolveUserId(headers, query);
+    return this.dkService.getOwnerMediaById(userId, parseInt(id, 10));
   }
 
   // POST /api/v1/dharma-kartha/media

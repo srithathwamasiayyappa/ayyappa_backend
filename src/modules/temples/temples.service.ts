@@ -368,7 +368,7 @@ export class TemplesService implements OnModuleInit {
     };
   }
 
-  async getTemples(query: { lang?: string; q?: string; deity?: string }): Promise<TempleDto[]> {
+  async getTemples(query: { lang?: string; q?: string; deity?: string; state?: string; includeInactive?: boolean | string }): Promise<TempleDto[]> {
     await this.ensureTablesExist();
 
     try {
@@ -377,15 +377,18 @@ export class TemplesService implements OnModuleInit {
         let filtered = rows;
 
         // Status / active filter
-        filtered = filtered.filter((r) => {
-          if (r.is_active !== undefined && r.is_active !== null) {
-            return Boolean(r.is_active);
-          }
-          if (r.status !== undefined && r.status !== null) {
-            return r.status === 'PUBLISHED';
-          }
-          return true;
-        });
+        const allowInactive = query.includeInactive === true || query.includeInactive === 'true' || query.includeInactive === '1';
+        if (!allowInactive) {
+          filtered = filtered.filter((r) => {
+            if (r.is_active !== undefined && r.is_active !== null) {
+              return Boolean(r.is_active);
+            }
+            if (r.status !== undefined && r.status !== null) {
+              return r.status === 'PUBLISHED';
+            }
+            return true;
+          });
+        }
 
         // Deity filter
         if (query.deity && query.deity !== 'all') {
@@ -396,18 +399,29 @@ export class TemplesService implements OnModuleInit {
           });
         }
 
+        // State filter
+        if (query.state && query.state !== 'all') {
+          const sLower = query.state.toLowerCase();
+          filtered = filtered.filter((r) => {
+            const rowState = (r.state || '').toLowerCase();
+            return rowState.includes(sLower);
+          });
+        }
+
         // Search query filter
         if (query.q && query.q.trim()) {
           const qLower = query.q.trim().toLowerCase();
           filtered = filtered.filter((r) => {
             const nameStr = (r.name || '').toLowerCase();
             const cityStr = (r.city || '').toLowerCase();
+            const districtStr = (r.district || '').toLowerCase();
             const stateStr = (r.state || '').toLowerCase();
-            const deityStr = (r.deity_name || r.primary_deity || '').toLowerCase();
+            const deityStr = (r.deity_name || r.primary_deity || r.deity_id || '').toLowerCase();
             const localNamesStr = (r.local_names_json || r.alternate_name || '').toLowerCase();
             return (
               nameStr.includes(qLower) ||
               cityStr.includes(qLower) ||
+              districtStr.includes(qLower) ||
               stateStr.includes(qLower) ||
               deityStr.includes(qLower) ||
               localNamesStr.includes(qLower)
@@ -429,6 +443,250 @@ export class TemplesService implements OnModuleInit {
     }
 
     return [];
+  }
+
+  async createTemple(data: any): Promise<TempleDto> {
+    await this.ensureTablesExist();
+
+    const name = data.name || 'Sacred Temple';
+    let slug = (data.slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')) || 'temple';
+    
+    // Check if slug already exists, append short hash if needed
+    try {
+      const existing: any = await this.prisma.$queryRawUnsafe('SELECT id FROM `temples` WHERE `slug` = ?', slug);
+      if (Array.isArray(existing) && existing.length > 0) {
+        slug = `${slug}-${Date.now().toString(36)}`;
+      }
+    } catch {}
+
+    const localNamesJson = typeof data.localNames === 'object' ? JSON.stringify(data.localNames) : (data.localNamesJson || '{}');
+    const specialityJson = Array.isArray(data.speciality) ? JSON.stringify(data.speciality) : (typeof data.speciality === 'string' ? JSON.stringify(data.speciality.split('\n').filter(Boolean)) : (data.specialityJson || '[]'));
+    const timingsJson = typeof data.timings === 'object' ? JSON.stringify(data.timings) : (data.timingsJson || '{}');
+    
+    const contactObj = typeof data.contact === 'object' && data.contact ? { ...data.contact } : {};
+    if (data.officePhone) contactObj.phone = data.officePhone;
+    if (data.officialEmail) contactObj.email = data.officialEmail;
+    if (data.officialWebsite) contactObj.website = data.officialWebsite;
+    const contactJson = JSON.stringify(contactObj);
+
+    const deityId = data.deityId || data.deity_id || 'ayyappa';
+    const deityName = data.deityName || data.deity_name || data.primaryDeity || 'Lord Ayyappa';
+    const city = data.city || 'Sannidhanam';
+    const district = data.district || null;
+    const state = data.state || 'Andhra Pradesh';
+    const country = data.country || 'India';
+    const address = data.address || null;
+    const pincode = data.pincode || null;
+    const latitude = data.latitude != null ? Number(data.latitude) : null;
+    const longitude = data.longitude != null ? Number(data.longitude) : null;
+    const thumbnailUrl = data.thumbnailUrl || data.heroImageUrl || null;
+    const heroImageUrl = data.heroImageUrl || data.thumbnailUrl || null;
+    const about = data.about || data.shortDescription || '';
+    const history = data.history || null;
+    const liveStreamId = data.liveStreamId || null;
+    const hasLiveDarshan = data.hasLiveDarshan ? 1 : 0;
+    const cropIndex = data.cropIndex ?? 0;
+    const isActive = data.isActive !== false ? 1 : 0;
+
+    try {
+      await this.prisma.$queryRawUnsafe(`
+        INSERT INTO \`temples\`
+        (\`slug\`, \`name\`, \`local_names_json\`, \`deity_id\`, \`deity_name\`, \`city\`, \`district\`, \`state\`, \`country\`, \`address\`, \`pincode\`, \`latitude\`, \`longitude\`, \`thumbnail_url\`, \`hero_image_url\`, \`about\`, \`history\`, \`speciality_json\`, \`timings_json\`, \`contact_json\`, \`live_stream_id\`, \`has_live_darshan\`, \`crop_index\`, \`is_active\`)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+        slug, name, localNamesJson, deityId, deityName, city, district, state, country, address, pincode,
+        latitude, longitude, thumbnailUrl, heroImageUrl, about, history, specialityJson, timingsJson, contactJson,
+        liveStreamId, hasLiveDarshan, cropIndex, isActive
+      );
+    } catch (e) {
+      console.warn('[TemplesService] createTemple raw query error, trying Prisma:', e);
+      try {
+        await (this.prisma as any).temple.create({
+          data: {
+            slug,
+            name,
+            alternateName: data.alternateName || null,
+            primaryDeity: deityName,
+            city,
+            district,
+            state,
+            country,
+            address,
+            pincode,
+            shortDescription: data.shortDescription || null,
+            about,
+            history,
+            speciality: typeof data.speciality === 'string' ? data.speciality : (Array.isArray(data.speciality) ? data.speciality.join('\n') : null),
+            officePhone: data.officePhone || contactObj.phone || null,
+            officialEmail: data.officialEmail || contactObj.email || null,
+            officialWebsite: data.officialWebsite || contactObj.website || null,
+            heroImageUrl,
+            status: isActive ? 'PUBLISHED' : 'DRAFT',
+          }
+        });
+      } catch (prismaErr) {
+        console.error('[TemplesService] createTemple failed:', prismaErr);
+        throw prismaErr;
+      }
+    }
+
+    return this.getTempleById(slug);
+  }
+
+  async updateTemple(idOrSlug: string, data: any): Promise<TempleDto> {
+    await this.ensureTablesExist();
+
+    const numericId = parseInt(idOrSlug, 10);
+    const isStrictNumeric = !isNaN(numericId) && String(numericId) === idOrSlug.trim();
+
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (data.name !== undefined) {
+      updates.push('`name` = ?');
+      values.push(data.name);
+    }
+    if (data.slug !== undefined) {
+      updates.push('`slug` = ?');
+      values.push(data.slug);
+    }
+    if (data.localNames !== undefined) {
+      updates.push('`local_names_json` = ?');
+      values.push(typeof data.localNames === 'object' ? JSON.stringify(data.localNames) : data.localNames);
+    }
+    if (data.deityId !== undefined) {
+      updates.push('`deity_id` = ?');
+      values.push(data.deityId);
+    }
+    if (data.deityName !== undefined) {
+      updates.push('`deity_name` = ?');
+      values.push(data.deityName);
+    }
+    if (data.city !== undefined) {
+      updates.push('`city` = ?');
+      values.push(data.city);
+    }
+    if (data.district !== undefined) {
+      updates.push('`district` = ?');
+      values.push(data.district);
+    }
+    if (data.state !== undefined) {
+      updates.push('`state` = ?');
+      values.push(data.state);
+    }
+    if (data.country !== undefined) {
+      updates.push('`country` = ?');
+      values.push(data.country);
+    }
+    if (data.address !== undefined) {
+      updates.push('`address` = ?');
+      values.push(data.address);
+    }
+    if (data.pincode !== undefined) {
+      updates.push('`pincode` = ?');
+      values.push(data.pincode);
+    }
+    if (data.latitude !== undefined) {
+      updates.push('`latitude` = ?');
+      values.push(data.latitude != null ? Number(data.latitude) : null);
+    }
+    if (data.longitude !== undefined) {
+      updates.push('`longitude` = ?');
+      values.push(data.longitude != null ? Number(data.longitude) : null);
+    }
+    if (data.thumbnailUrl !== undefined) {
+      updates.push('`thumbnail_url` = ?');
+      values.push(data.thumbnailUrl);
+    }
+    if (data.heroImageUrl !== undefined) {
+      updates.push('`hero_image_url` = ?');
+      values.push(data.heroImageUrl);
+    }
+    if (data.about !== undefined) {
+      updates.push('`about` = ?');
+      values.push(data.about);
+    }
+    if (data.history !== undefined) {
+      updates.push('`history` = ?');
+      values.push(data.history);
+    }
+    if (data.speciality !== undefined) {
+      updates.push('`speciality_json` = ?');
+      const spec = Array.isArray(data.speciality) ? JSON.stringify(data.speciality) : (typeof data.speciality === 'string' ? JSON.stringify(data.speciality.split('\n').filter(Boolean)) : '[]');
+      values.push(spec);
+    }
+    if (data.timings !== undefined) {
+      updates.push('`timings_json` = ?');
+      values.push(typeof data.timings === 'object' ? JSON.stringify(data.timings) : data.timings);
+    }
+    if (data.contact !== undefined) {
+      updates.push('`contact_json` = ?');
+      values.push(typeof data.contact === 'object' ? JSON.stringify(data.contact) : data.contact);
+    }
+    if (data.liveStreamId !== undefined) {
+      updates.push('`live_stream_id` = ?');
+      values.push(data.liveStreamId);
+    }
+    if (data.hasLiveDarshan !== undefined) {
+      updates.push('`has_live_darshan` = ?');
+      values.push(data.hasLiveDarshan ? 1 : 0);
+    }
+    if (data.cropIndex !== undefined) {
+      updates.push('`crop_index` = ?');
+      values.push(Number(data.cropIndex));
+    }
+    if (data.isActive !== undefined) {
+      updates.push('`is_active` = ?');
+      values.push(data.isActive ? 1 : 0);
+    }
+
+    if (updates.length > 0) {
+      const sql = isStrictNumeric
+        ? `UPDATE \`temples\` SET ${updates.join(', ')} WHERE \`id\` = ?`
+        : `UPDATE \`temples\` SET ${updates.join(', ')} WHERE \`slug\` = ? OR \`id\` = ?`;
+      
+      const params = isStrictNumeric ? [...values, numericId] : [...values, idOrSlug, numericId || 0];
+
+      try {
+        await this.prisma.$queryRawUnsafe(sql, ...params);
+      } catch (e) {
+        console.warn('[TemplesService] updateTemple raw query warning:', e);
+      }
+    }
+
+    return this.getTempleById(data.slug || idOrSlug);
+  }
+
+  async deleteTemple(idOrSlug: string): Promise<boolean> {
+    await this.ensureTablesExist();
+
+    const numericId = parseInt(idOrSlug, 10);
+    const isStrictNumeric = !isNaN(numericId) && String(numericId) === idOrSlug.trim();
+
+    try {
+      if (isStrictNumeric) {
+        await this.prisma.$queryRawUnsafe('DELETE FROM `temples` WHERE `id` = ?', numericId);
+      } else {
+        await this.prisma.$queryRawUnsafe('DELETE FROM `temples` WHERE `slug` = ? OR `id` = ?', idOrSlug, numericId || 0);
+      }
+      return true;
+    } catch (e) {
+      console.warn('[TemplesService] deleteTemple raw warning, trying Prisma:', e);
+      try {
+        await (this.prisma as any).temple.deleteMany({
+          where: {
+            OR: [
+              { slug: idOrSlug },
+              ...(isStrictNumeric ? [{ id: numericId }] : [])
+            ]
+          }
+        });
+        return true;
+      } catch (err) {
+        console.error('[TemplesService] deleteTemple failed:', err);
+        return false;
+      }
+    }
   }
 
   async getTempleById(idOrSlug: string, lang = 'en'): Promise<TempleDto> {

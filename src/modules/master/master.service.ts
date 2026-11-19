@@ -304,7 +304,44 @@ export class MasterService {
   /**
    * Fetch deities from DB Temples and Hindu Devotional Pantheon
    */
-  async getDeities() {
+  async getDeities(lang = 'te') {
+    try {
+      const setting = await this.prisma.appSetting.findUnique({
+        where: { key: 'deities' }
+      });
+      let deities: any[] = [];
+      if (setting && setting.value) {
+        try { deities = JSON.parse(setting.value); } catch {}
+      }
+      if (!deities || deities.length === 0) {
+        try {
+          deities = require('../admin/deities-five-languages.json');
+        } catch {}
+      }
+      if (Array.isArray(deities) && deities.length > 0) {
+        const targetLang = (lang || 'te').toLowerCase().trim();
+        return deities.map((d: any) => {
+          const trans = d.translations || {};
+          const loc = trans[targetLang] || trans['te'] || trans['en'] || {};
+          return {
+            id: d.id,
+            name: loc.name || d.name,
+            alternateName: loc.alternateName !== undefined ? loc.alternateName : d.alternateName,
+            category: d.category,
+            image: d.imageUrl,
+            imageUrl: d.imageUrl,
+            vahana: loc.vahana !== undefined ? loc.vahana : d.vahana,
+            moolaMantra: loc.moolaMantra !== undefined ? loc.moolaMantra : d.moolaMantra,
+            primaryTemple: loc.primaryTemple !== undefined ? loc.primaryTemple : d.primaryTemple,
+            description: loc.description !== undefined ? loc.description : d.description,
+            displayOrder: d.displayOrder,
+            isActive: d.isActive !== false,
+            translations: trans
+          };
+        });
+      }
+    } catch {}
+
     try {
       const dbDeities = await this.prisma.temple.findMany({
         select: { primaryDeity: true },

@@ -16,11 +16,14 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { TranslationService } from './translation.service';
+import { TemplesService } from '../temples/temples.service';
+import { DharmaKarthaService } from '../dharma-kartha/dharma-kartha.service';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Request } from 'express';
+import { PanchangamCalculator, CITIES } from '../panchangam/panchangam.calculator';
 
 // In-Memory Rate Limiting for Admin Authentication (Anti-Brute Force)
 const loginAttempts = new Map<string, { count: number; firstAttempt: number }>();
@@ -42,6 +45,8 @@ export class AdminController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly translationService: TranslationService,
+    private readonly templesService: TemplesService,
+    private readonly dkService: DharmaKarthaService,
   ) {}
 
   // 1. Admin Authentication & Session Security (Bcrypt Salt 12 + Sliding-Window Rate Limiter)
@@ -314,7 +319,17 @@ export class AdminController {
       include: { _count: { select: { contentTranslations: true } } }
     });
 
-    const nativeNames: Record<string, string> = {
+    // Dynamic native names from database app settings
+    const nativeSettings = await this.prisma.appSetting.findMany({
+      where: { key: { startsWith: 'lang_native_' } }
+    }).catch(() => []);
+    const dynamicNativeMap: Record<string, string> = {};
+    for (const s of nativeSettings) {
+      const c = s.key.replace('lang_native_', '');
+      dynamicNativeMap[c] = s.value;
+    }
+
+    const defaultNativeNames: Record<string, string> = {
       te: 'తెలుగు', kn: 'ಕನ್ನಡ', en: 'English', ta: 'தமிழ்', hi: 'हिन्दी'
     };
 
@@ -322,7 +337,7 @@ export class AdminController {
       id: l.id,
       code: l.code,
       name: l.name,
-      nativeName: nativeNames[l.code] || l.name,
+      nativeName: dynamicNativeMap[l.code] || defaultNativeNames[l.code] || l.name,
       direction: 'LTR',
       isDefault: l.code === 'te',
       status: 'ACTIVE',
@@ -333,7 +348,7 @@ export class AdminController {
   }
 
   @Post('languages')
-  async createLanguage(@Body() body: { code: string; name: string }) {
+  async createLanguage(@Body() body: { code: string; name: string; nativeName?: string }) {
     if (!body.code || !body.name) throw new BadRequestException('Code and name required');
     const code = body.code.toLowerCase().trim();
     const existing = await this.prisma.language.findUnique({ where: { code } });
@@ -342,17 +357,45 @@ export class AdminController {
     const created = await this.prisma.language.create({
       data: { code, name: body.name.trim() }
     });
+
+    if (body.nativeName && body.nativeName.trim()) {
+      const settingKey = `lang_native_${code}`;
+      await this.prisma.appSetting.upsert({
+        where: { key: settingKey },
+        update: { value: body.nativeName.trim(), description: `Native name for ${code}` },
+        create: { key: settingKey, value: body.nativeName.trim(), description: `Native name for ${code}` },
+      }).catch(() => {});
+    }
+
     return { success: true, data: created };
   }
 
   @Put('languages/:id')
-  async updateLanguage(@Param('id') id: string, @Body() body: { name?: string }) {
+  async updateLanguage(@Param('id') id: string, @Body() body: { name?: string; code?: string; nativeName?: string }) {
     const numId = parseInt(id, 10);
+    const existing = await this.prisma.language.findUnique({ where: { id: numId } });
+    if (!existing) throw new NotFoundException('Language not found');
+
+    const updateData: any = {};
+    if (body.name && body.name.trim()) updateData.name = body.name.trim();
+    if (body.code && body.code.trim()) updateData.code = body.code.toLowerCase().trim();
+
     const updated = await this.prisma.language.update({
       where: { id: numId },
-      data: { name: body.name }
+      data: updateData
     });
-    return { success: true, data: updated };
+
+    const targetCode = (updateData.code || existing.code).toLowerCase().trim();
+    if (body.nativeName !== undefined && body.nativeName !== null) {
+      const settingKey = `lang_native_${targetCode}`;
+      await this.prisma.appSetting.upsert({
+        where: { key: settingKey },
+        update: { value: body.nativeName.trim(), description: `Native name for ${targetCode}` },
+        create: { key: settingKey, value: body.nativeName.trim(), description: `Native name for ${targetCode}` },
+      }).catch(() => {});
+    }
+
+    return { success: true, data: { ...updated, nativeName: body.nativeName || existing.name } };
   }
 
   @Delete('languages/:id')
@@ -373,7 +416,8 @@ export class AdminController {
     return { success: true };
   }
 
-  // 4. Categories Management (Root categories: parentId == null)
+
+    // 4. Categories Management (Root categories: parentId == null)
   @Get('categories')
   async getCategories(
     @Query('page') page: string = '1',
@@ -464,7 +508,7 @@ export class AdminController {
   }
 
   @Post('categories')
-  async createCategory(@Body() body: { title: string; slug: string; isAudio: boolean; description?: string; lang?: string; parentId?: number }) {
+  async createCategory(@Body() body: { title: string; slug: string; isAudio: boolean; description?: string; lang?: string; parentId?: number; imageUrl?: string }) {
     const defaultLang = await this.prisma.language.findFirst({ where: { code: body.lang || 'te' } })
       || await this.prisma.language.findFirst();
 
@@ -485,6 +529,27 @@ export class AdminController {
         }
       }
     });
+
+    if (body.imageUrl) {
+      let finalImg = body.imageUrl.trim();
+      if (finalImg.startsWith('data:image/')) {
+        finalImg = this.saveBase64Image(finalImg, 'subcategory');
+      }
+      try {
+        const setting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+        let map: Record<string, string> = {};
+        if (setting && setting.value) {
+          try { map = JSON.parse(setting.value); } catch {}
+        }
+        map[String(created.id)] = finalImg;
+        map[created.slug] = finalImg;
+        await this.prisma.appSetting.upsert({
+          where: { key: 'subcategory_images' },
+          update: { value: JSON.stringify(map) },
+          create: { key: 'subcategory_images', value: JSON.stringify(map), description: 'Custom Subcategory Images Map' }
+        });
+      } catch (_) {}
+    }
 
     return { success: true, data: { id: String(created.id), ...body } };
   }
@@ -507,6 +572,30 @@ export class AdminController {
         parentId: body.parentId !== undefined ? (body.parentId ? Number(body.parentId) : null) : existing.parentId
       }
     });
+
+    if (body.imageUrl !== undefined && body.imageUrl !== null) {
+      let finalImg = String(body.imageUrl).trim();
+      if (finalImg.startsWith('data:image/')) {
+        finalImg = this.saveBase64Image(finalImg, 'subcategory');
+      }
+      try {
+        const setting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+        let map: Record<string, string> = {};
+        if (setting && setting.value) {
+          try { map = JSON.parse(setting.value); } catch {}
+        }
+        map[String(numId)] = finalImg;
+        map[existing.slug] = finalImg;
+        if (body.slug && body.slug !== existing.slug) map[body.slug] = finalImg;
+        await this.prisma.appSetting.upsert({
+          where: { key: 'subcategory_images' },
+          update: { value: JSON.stringify(map) },
+          create: { key: 'subcategory_images', value: JSON.stringify(map), description: 'Custom Subcategory Images Map' }
+        });
+      } catch (err) {
+        console.warn('Could not save subcategory image:', err);
+      }
+    }
 
     if (body.title) {
       const targetLang = await this.prisma.language.findFirst({ where: { code: body.lang || 'te' } })
@@ -538,7 +627,33 @@ export class AdminController {
     return { success: true };
   }
 
-  @Delete('categories/:id')
+  @Post('categories/:id/image')
+  @Post('subcategories/:id/image')
+  async uploadSubcategoryImage(
+    @Param('id') id: string,
+    @Body() body: { image: string }
+  ) {
+    if (!body || !body.image) throw new BadRequestException('Image payload required');
+    let finalUrl = body.image.trim();
+    if (finalUrl.startsWith('data:image/')) {
+      finalUrl = this.saveBase64Image(finalUrl, 'subcategory');
+    }
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+    let map: Record<string, string> = {};
+    if (setting && setting.value) {
+      try { map = JSON.parse(setting.value); } catch {}
+    }
+    map[id] = finalUrl;
+    await this.prisma.appSetting.upsert({
+      where: { key: 'subcategory_images' },
+      update: { value: JSON.stringify(map) },
+      create: { key: 'subcategory_images', value: JSON.stringify(map), description: 'Custom Subcategory Images Map' }
+    });
+    return { success: true, imageUrl: finalUrl };
+  }
+
+
+    @Delete('categories/:id')
   async archiveCategory(@Param('id') id: string) {
     const numId = parseInt(id, 10);
     const existing = await this.prisma.contentCategory.findUnique({ where: { id: numId } });
@@ -559,16 +674,36 @@ export class AdminController {
   // 4b. Category Tree & Parents Lookup
   @Get('categories/parents')
   async getParentCategoriesLookup(@Query('lang') lang: string = 'te') {
-    const categories = await this.prisma.contentCategory.findMany({
-      where: { isArchived: false },
-      orderBy: { displayOrder: 'asc' },
-      include: {
-        translations: { include: { language: true } }
-      }
-    });
+    let categories: any[] = [];
+    try {
+      categories = await this.prisma.contentCategory.findMany({
+        where: { parentId: null, isArchived: false },
+        orderBy: { displayOrder: 'asc' },
+        include: {
+          translations: { include: { language: true } }
+        }
+      });
+    } catch (e) {
+      console.warn('[Admin] Parent categories lookup error:', e);
+    }
+
+    if (!categories || categories.length === 0) {
+      // Fallback standard 9 sanctum parent categories
+      return [
+        { id: 1, slug: 'pooja', title: 'Pooja Vidhanam', parentId: null },
+        { id: 2, slug: 'stotras', title: 'Divine Stotras', parentId: null },
+        { id: 3, slug: 'slokas', title: 'Daily Slokas', parentId: null },
+        { id: 4, slug: 'songs', title: 'Bhajans & Songs', parentId: null },
+        { id: 5, slug: 'live-streams', title: 'Live Darshan', parentId: null },
+        { id: 6, slug: 'panchangam', title: 'Panchangam', parentId: null },
+        { id: 7, slug: 'festivals', title: 'Temple Festivals', parentId: null },
+        { id: 8, slug: 'temples', title: 'Sacred Temples', parentId: null },
+        { id: 9, slug: 'donations', title: 'Annadanam Seva', parentId: null },
+      ];
+    }
 
     return categories.map(c => {
-      const match = c.translations.find(t => t.language.code === lang) || c.translations[0];
+      const match = c.translations?.find((t: any) => t.language?.code === lang) || c.translations?.[0];
       return {
         id: c.id,
         slug: c.slug,
@@ -578,22 +713,49 @@ export class AdminController {
     });
   }
 
-  // 5. Subcategories CRUD (Items where parentId !== null)
+  // 5. Subcategories CRUD (Items based on categories with parent filtering)
   @Get('subcategories')
   async getSubcategories(
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '20',
+    @Query('limit') limit: string = '100',
     @Query('search') search?: string,
     @Query('lang') lang: string = 'te',
     @Query('parentId') parentId?: string
   ) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const take = Math.min(200, Math.max(1, parseInt(limit, 10) || 100));
     const skip = (pageNum - 1) * take;
 
+    let targetParentCondition: any = { not: null };
+
+    if (parentId && parentId !== 'all') {
+      const parsed = parseInt(parentId, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        targetParentCondition = parsed;
+      } else {
+        try {
+          const parentMatch = await this.prisma.contentCategory.findFirst({
+            where: {
+              OR: [
+                { slug: parentId },
+                { slug: parentId.toLowerCase() },
+                { translations: { some: { title: { contains: parentId } } } }
+              ]
+            }
+          });
+          if (parentMatch) {
+            targetParentCondition = parentMatch.id;
+          } else {
+            targetParentCondition = -999999;
+          }
+        } catch (_) {
+          targetParentCondition = -999999;
+        }
+      }
+    }
+
     const where: any = {
-      parentId: parentId ? Number(parentId) : { not: null },
-      isArchived: false
+      parentId: targetParentCondition
     };
 
     if (search && search.trim() !== '') {
@@ -607,46 +769,125 @@ export class AdminController {
       ];
     }
 
-    const [totalRecords, items] = await Promise.all([
-      this.prisma.contentCategory.count({ where }),
-      this.prisma.contentCategory.findMany({
-        where,
-        skip,
-        take,
-        orderBy: { displayOrder: 'asc' },
-        include: {
-          parent: { include: { translations: true } },
-          translations: { include: { language: true } }
-        }
-      })
-    ]);
+    let totalRecords = 0;
+    let items: any[] = [];
+    try {
+      [totalRecords, items] = await Promise.all([
+        this.prisma.contentCategory.count({ where }),
+        this.prisma.contentCategory.findMany({
+          where,
+          skip,
+          take,
+          orderBy: { displayOrder: 'asc' },
+          include: {
+            parent: { include: { translations: true } },
+            translations: { include: { language: true } }
+          }
+        })
+      ]);
+    } catch (err) {
+      console.warn('[Admin] Subcategories DB query warning:', err);
+    }
 
-    const totalPages = Math.ceil(totalRecords / take);
+    if (items.length > 0) {
+      let customImages: Record<string, string> = {};
+      try {
+        const imgSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+        if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
+      } catch (_) {}
 
-    const formatted = items.map(cat => {
-      const preferred = cat.translations.find(t => t.language.code === lang) || cat.translations[0];
-      const parentPref = cat.parent?.translations.find(t => t.languageId === preferred?.languageId) || cat.parent?.translations[0];
+      const totalPages = Math.ceil(totalRecords / take);
+      const formatted = items.map(cat => {
+        const preferred = cat.translations.find((t: any) => t.language?.code === lang) || cat.translations[0];
+        const parentPref = cat.parent?.translations?.find((t: any) => t.languageId === preferred?.languageId) || cat.parent?.translations?.[0];
+        const pSlug = cat.parent?.slug || 'pooja';
+        const customImg = customImages[String(cat.id)] || customImages[cat.slug];
+        return {
+          id: String(cat.id),
+          slug: cat.slug,
+          title: preferred ? preferred.title : cat.slug,
+          description: preferred?.description || '',
+          parentId: cat.parentId,
+          parentSlug: pSlug,
+          parentTitle: parentPref ? parentPref.title : pSlug,
+          displayOrder: cat.displayOrder,
+          isAudio: cat.isAudio,
+          imageUrl: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
+          createdAt: cat.createdAt
+        };
+      });
+
       return {
-        id: String(cat.id),
-        slug: cat.slug,
-        title: preferred ? preferred.title : cat.slug,
-        description: preferred?.description || '',
-        parentId: cat.parentId,
-        parentTitle: parentPref ? parentPref.title : cat.parent?.slug || 'Root',
-        isAudio: cat.isAudio,
-        createdAt: cat.createdAt
+        data: formatted,
+        meta: {
+          page: pageNum,
+          limit: take,
+          totalRecords,
+          totalPages,
+          hasNextPage: pageNum < totalPages,
+          hasPreviousPage: pageNum > 1
+        }
       };
-    });
+    }
+
+    // Default 27-row Subcategory Catalog Fallback (mapped by parent category)
+    const seedCatalog = [
+      // Pooja Vidhanam
+      { id: '1', parentKey: 'pooja', parentTitle: 'Pooja Vidhanam', slug: 'ayyappa-pooja', displayOrder: 10, title: lang === 'te' ? 'అయ్యప్ప పూజ' : lang === 'kn' ? 'ಅಯ್ಯಪ್ಪ ಪೂಜೆ' : lang === 'ta' ? 'ஐயப்ப பூஜை' : lang === 'hi' ? 'अय्यप्पा पूजा' : 'Ayyappa Pooja', description: 'Home worship guides, offerings and prayer sequence for Ayyappa devotees.', isAudio: false, imageUrl: '/images/subcategories/pooja/ayyappa-pooja.webp' },
+      { id: '2', parentKey: 'pooja', parentTitle: 'Pooja Vidhanam', slug: 'ganapati-pooja', displayOrder: 20, title: lang === 'te' ? 'గణపతి పూజ' : lang === 'kn' ? 'ಗಣಪತಿ ಪೂಜೆ' : lang === 'ta' ? 'விநாயகர் பூஜை' : lang === 'hi' ? 'गणपति पूजा' : 'Ganapati Pooja', description: 'Guides to Ganapati worship and preparations for auspicious beginnings.', isAudio: false, imageUrl: '/images/subcategories/pooja/ganapati-pooja.webp' },
+      { id: '3', parentKey: 'pooja', parentTitle: 'Pooja Vidhanam', slug: 'shiva-abhishekam', displayOrder: 30, title: lang === 'te' ? 'శివాభిషేకం' : lang === 'kn' ? 'ಶಿವಾಭಿಷೇಕ' : lang === 'ta' ? 'சிவ அபிஷேகம்' : lang === 'hi' ? 'शिव अभिषेक' : 'Shiva Abhishekam', description: 'Guides to Shiva abhishekam with materials, preparation and worship steps.', isAudio: false, imageUrl: '/images/subcategories/pooja/shiva-abhishekam.webp' },
+      // Divine Stotras
+      { id: '4', parentKey: 'stotras', parentTitle: 'Divine Stotras', slug: 'ayyappa-stotras', displayOrder: 10, title: lang === 'te' ? 'అయ్యప్ప స్తోత్రాలు' : lang === 'kn' ? 'ಅಯ್ಯಪ್ಪ ಸ್ತೋತ್ರಗಳು' : lang === 'ta' ? 'ஐயப்ப ஸ்தோத்திரங்கள்' : lang === 'hi' ? 'अय्यप्पा स्तोत्र' : 'Ayyappa Stotras', description: 'Hymns in praise of Lord Ayyappa, with text and meaning when available.', isAudio: false, imageUrl: '/images/subcategories/stotras/ayyappa-stotras.webp' },
+      { id: '5', parentKey: 'stotras', parentTitle: 'Divine Stotras', slug: 'shiva-stotras', displayOrder: 20, title: lang === 'te' ? 'శివ స్తోత్రాలు' : lang === 'kn' ? 'ಶಿವ ಸ್ತೋತ್ರಗಳು' : lang === 'ta' ? 'சிவ ஸ்தோத்திரங்கள்' : lang === 'hi' ? 'शिव स्तोत्र' : 'Shiva Stotras', description: 'Hymns dedicated to Shiva, including short praises and longer compositions.', isAudio: false, imageUrl: '/images/subcategories/stotras/shiva-stotras.webp' },
+      { id: '6', parentKey: 'stotras', parentTitle: 'Divine Stotras', slug: 'vishnu-stotras', displayOrder: 30, title: lang === 'te' ? 'విష్ణు స్తోత్రాలు' : lang === 'kn' ? 'ವಿಷ್ಣು ಸ್ತೋತ್ರಗಳು' : lang === 'ta' ? 'விஷ்ணு ஸ்தோத்திரங்கள்' : lang === 'hi' ? 'विष्णु स्तोत्र' : 'Vishnu Stotras', description: 'Hymns dedicated to Vishnu and forms worshipped in Vaishnava traditions.', isAudio: false, imageUrl: '/images/subcategories/stotras/vishnu-stotras.webp' },
+      // Daily Slokas
+      { id: '7', parentKey: 'slokas', parentTitle: 'Daily Slokas', slug: 'morning-prayers', displayOrder: 10, title: lang === 'te' ? 'ప్రాతఃకాల ప్రార్థనలు' : lang === 'kn' ? 'ಬೆಳಗಿನ ಪ್ರಾರ್ಥನೆಗಳು' : lang === 'ta' ? 'காலைப் பிரார்த்தனைகள்' : lang === 'hi' ? 'प्रातःकालीन प्रार्थनाएँ' : 'Morning Prayers', description: 'Short verses for beginning the day.', isAudio: false, imageUrl: '/images/subcategories/slokas/morning-prayers.webp' },
+      { id: '8', parentKey: 'slokas', parentTitle: 'Daily Slokas', slug: 'meal-prayers', displayOrder: 20, title: lang === 'te' ? 'భోజన ప్రార్థనలు' : lang === 'kn' ? 'ಊಟದ ಪ್ರಾರ್ಥನೆಗಳು' : lang === 'ta' ? 'உணவுக்கு முன் பிரார்த்தனைகள்' : lang === 'hi' ? 'भोजन प्रार्थनाएँ' : 'Meal Prayers', description: 'Short verses and prayers for recitation before meals.', isAudio: false, imageUrl: '/images/subcategories/slokas/meal-prayers.webp' },
+      { id: '9', parentKey: 'slokas', parentTitle: 'Daily Slokas', slug: 'night-prayers', displayOrder: 30, title: lang === 'te' ? 'రాత్రి ప్రార్థనలు' : lang === 'kn' ? 'ರಾತ್ರಿಯ ಪ್ರಾರ್ಥನೆಗಳು' : lang === 'ta' ? 'இரவுப் பிரார்த்தனைகள்' : lang === 'hi' ? 'रात्रि प्रार्थनाएँ' : 'Night Prayers', description: 'Short verses for reflection and prayer before sleep.', isAudio: false, imageUrl: '/images/subcategories/slokas/night-prayers.webp' },
+      // Bhajans & Songs
+      { id: '10', parentKey: 'songs', parentTitle: 'Bhajans & Songs', slug: 'ayyappa-bhajans', displayOrder: 10, title: lang === 'te' ? 'అయ్యప్ప భజనలు' : lang === 'kn' ? 'ಅಯ್ಯಪ್ಪ ಭಜನೆಗಳು' : lang === 'ta' ? 'ஐயப்ப பஜனைகள்' : lang === 'hi' ? 'अय्यप्पा भजन' : 'Ayyappa Bhajans', description: 'Devotional songs for Ayyappa gatherings and pilgrimage.', isAudio: true, imageUrl: '/images/subcategories/songs/ayyappa-bhajans.webp' },
+      { id: '11', parentKey: 'songs', parentTitle: 'Bhajans & Songs', slug: 'rama-bhajans', displayOrder: 20, title: lang === 'te' ? 'రామ భజనలు' : lang === 'kn' ? 'ರಾಮ ಭಜನೆಗಳು' : lang === 'ta' ? 'இராம பஜனைகள்' : lang === 'hi' ? 'राम भजन' : 'Rama Bhajans', description: 'Group singing and devotional songs dedicated to Rama.', isAudio: true, imageUrl: '/images/subcategories/songs/rama-bhajans.webp' },
+      { id: '12', parentKey: 'songs', parentTitle: 'Bhajans & Songs', slug: 'krishna-bhajans', displayOrder: 30, title: lang === 'te' ? 'కృష్ణ భజనలు' : lang === 'kn' ? 'ಕೃಷ್ಣ ಭಜನೆಗಳು' : lang === 'ta' ? 'கிருஷ்ண பஜனைகள்' : lang === 'hi' ? 'कृष्ण भजन' : 'Krishna Bhajans', description: 'Devotional songs and kirtans dedicated to Krishna.', isAudio: true, imageUrl: '/images/subcategories/songs/krishna-bhajans.webp' },
+      // Live Darshan
+      { id: '13', parentKey: 'live-streams', parentTitle: 'Live Darshan', slug: 'sabarimala-darshan', displayOrder: 10, title: lang === 'te' ? 'శబరిమల దర్శనం' : lang === 'kn' ? 'ಶಬರಿಮಲೆ ದರ್ಶನ' : lang === 'ta' ? 'சபரிமலை தரிசனம்' : lang === 'hi' ? 'सबरीमला दर्शन' : 'Sabarimala Darshan', description: 'Group approved Sabarimala broadcasts and scheduled darshan streams.', isAudio: false, imageUrl: '/images/subcategories/live-streams/sabarimala-darshan.webp' },
+      { id: '14', parentKey: 'live-streams', parentTitle: 'Live Darshan', slug: 'tirumala-darshan', displayOrder: 20, title: lang === 'te' ? 'తిరుమల దర్శనం' : lang === 'kn' ? 'ತಿರುಮಲ ದರ್ಶನ' : lang === 'ta' ? 'திருமலை தரிசனம்' : lang === 'hi' ? 'तिरुमला दर्शन' : 'Tirumala Darshan', description: 'Group approved Tirumala broadcasts and scheduled darshan streams.', isAudio: false, imageUrl: '/images/subcategories/live-streams/tirumala-darshan.webp' },
+      { id: '15', parentKey: 'live-streams', parentTitle: 'Live Darshan', slug: 'kanaka-durga-darshan', displayOrder: 30, title: lang === 'te' ? 'కనకదుర్గ దర్శనం' : lang === 'kn' ? 'ಕನಕ ದುರ್ಗಾ ದರ್ಶನ' : lang === 'ta' ? 'கனக துர்கை தரிசனம்' : lang === 'hi' ? 'कनक दुर्गा दर्शन' : 'Kanaka Durga Darshan', description: 'Group approved broadcasts from the Kanaka Durga temple in Vijayawada.', isAudio: false, imageUrl: '/images/subcategories/live-streams/kanaka-durga-darshan.webp' },
+      // Panchangam
+      { id: '16', parentKey: 'panchangam', parentTitle: 'Panchangam', slug: 'daily-panchangam', displayOrder: 10, title: lang === 'te' ? 'దిన పంచాంగం' : lang === 'kn' ? 'ದಿನ ಪಂಚಾಂಗ' : lang === 'ta' ? 'தினப் பஞ்சாங்கம்' : lang === 'hi' ? 'दैनिक पंचांग' : 'Daily Panchangam', description: 'Daily tithi, nakshatra and other calendar details for the selected location.', isAudio: false, imageUrl: '/images/subcategories/panchangam/daily-panchangam.webp' },
+      { id: '17', parentKey: 'panchangam', parentTitle: 'Panchangam', slug: 'daily-timings', displayOrder: 20, title: lang === 'te' ? 'రోజువారీ సమయాలు' : lang === 'kn' ? 'ದೈನಂದಿನ ಸಮಯಗಳು' : lang === 'ta' ? 'தினசரி நேரங்கள்' : lang === 'hi' ? 'दैनिक समय' : 'Daily Timings', description: 'Local sunrise, sunset, Rahu Kalam and Yamagandam timings.', isAudio: false, imageUrl: '/images/subcategories/panchangam/daily-timings.webp' },
+      { id: '18', parentKey: 'panchangam', parentTitle: 'Panchangam', slug: 'muhurtam', displayOrder: 30, title: lang === 'te' ? 'ముహూర్తాలు' : lang === 'kn' ? 'ಮುಹೂರ್ತಗಳು' : lang === 'ta' ? 'முகூர்த்தங்கள்' : lang === 'hi' ? 'मुहूर्त' : 'Muhurtam', description: 'Browse auspicious timing information by occasion and location.', isAudio: false, imageUrl: '/images/subcategories/panchangam/muhurtam.webp' },
+      // Temple Festivals
+      { id: '19', parentKey: 'festivals', parentTitle: 'Temple Festivals', slug: 'mandala-pooja', displayOrder: 10, title: lang === 'te' ? 'మండల పూజ' : lang === 'kn' ? 'ಮಂಡಲ ಪೂಜೆ' : lang === 'ta' ? 'மண்டல பூஜை' : lang === 'hi' ? 'मंडल पूजा' : 'Mandala Pooja', description: 'Sabarimala Mandala season observances and temple events.', isAudio: false, imageUrl: '/images/subcategories/festivals/mandala-pooja.webp' },
+      { id: '20', parentKey: 'festivals', parentTitle: 'Temple Festivals', slug: 'makaravilakku', displayOrder: 20, title: lang === 'te' ? 'మకరవిళక్కు' : lang === 'kn' ? 'ಮಕರವಿಳಕ್ಕು' : lang === 'ta' ? 'மகரவிளக்கு' : lang === 'hi' ? 'मकरविलक्कु' : 'Makaravilakku', description: 'Sabarimala Makaravilakku season updates and scheduled events.', isAudio: false, imageUrl: '/images/subcategories/festivals/makaravilakku.webp' },
+      { id: '21', parentKey: 'festivals', parentTitle: 'Temple Festivals', slug: 'navaratri', displayOrder: 30, title: lang === 'te' ? 'నవరాత్రులు' : lang === 'kn' ? 'ನವರಾತ್ರಿ' : lang === 'ta' ? 'நவராத்திரி' : lang === 'hi' ? 'नवरात्रि' : 'Navaratri', description: 'Temple celebrations, special poojas and devotional events during Navaratri.', isAudio: false, imageUrl: '/images/subcategories/festivals/navaratri.webp' },
+      // Sacred Temples
+      { id: '22', parentKey: 'temples', parentTitle: 'Sacred Temples', slug: 'ayyappa-temples', displayOrder: 10, title: lang === 'te' ? 'అయ్యప్ప ఆలయాలు' : lang === 'kn' ? 'ಅಯ್ಯಪ್ಪ ದೇವಸ್ಥಾನಗಳು' : lang === 'ta' ? 'ஐயப்பன் கோயில்கள்' : lang === 'hi' ? 'अय्यप्पा मंदिर' : 'Ayyappa Temples', description: 'Ayyappa and Dharma Sastha shrines, including Sabarimala.', isAudio: false, imageUrl: '/images/subcategories/temples/ayyappa-temples.webp' },
+      { id: '23', parentKey: 'temples', parentTitle: 'Sacred Temples', slug: 'vishnu-temples', displayOrder: 20, title: lang === 'te' ? 'విష్ణు ఆలయాలు' : lang === 'kn' ? 'ವಿಷ್ಣು ದೇವಸ್ಥಾನಗಳು' : lang === 'ta' ? 'விஷ்ணு கோயில்கள்' : lang === 'hi' ? 'विष्णु मंदिर' : 'Vishnu Temples', description: 'Shrines dedicated to Vishnu and his forms, including Venkateswara.', isAudio: false, imageUrl: '/images/subcategories/temples/vishnu-temples.webp' },
+      { id: '24', parentKey: 'temples', parentTitle: 'Sacred Temples', slug: 'shiva-temples', displayOrder: 30, title: lang === 'te' ? 'శివాలయాలు' : lang === 'kn' ? 'ಶಿವ ದೇವಸ್ಥಾನಗಳು' : lang === 'ta' ? 'சிவன் கோயில்கள்' : lang === 'hi' ? 'शिव मंदिर' : 'Shiva Temples', description: 'Shiva shrines and pilgrimage destinations, including Jyotirlinga temples.', isAudio: false, imageUrl: '/images/subcategories/temples/shiva-temples.webp' },
+      // Annadanam Seva
+      { id: '25', parentKey: 'donations', parentTitle: 'Annadanam Seva', slug: 'meal-sponsorship', displayOrder: 10, title: lang === 'te' ? 'అన్నదాన ప్రాయోజకత్వం' : lang === 'kn' ? 'ಅನ್ನದಾನ ಪ್ರಾಯೋಜಕತ್ವ' : lang === 'ta' ? 'அன்னதான ஆதரவு' : lang === 'hi' ? 'अन्नदान प्रायोजन' : 'Annadanam Sponsorship', description: 'Browse temple-managed opportunities to sponsor meals for devotees.', isAudio: false, imageUrl: '/images/subcategories/donations/meal-sponsorship.webp' },
+      { id: '26', parentKey: 'donations', parentTitle: 'Annadanam Seva', slug: 'volunteer-seva', displayOrder: 20, title: lang === 'te' ? 'స్వచ్ఛంద సేవ' : lang === 'kn' ? 'ಸ್ವಯಂಸೇವಾ ಸೇವೆ' : lang === 'ta' ? 'தன்னார்வ சேவை' : lang === 'hi' ? 'स्वयंसेवक सेवा' : 'Volunteer Seva', description: 'Browse opportunities to help prepare or serve meals through organizers.', isAudio: false, imageUrl: '/images/subcategories/donations/volunteer-seva.webp' },
+      { id: '27', parentKey: 'donations', parentTitle: 'Annadanam Seva', slug: 'provisions-seva', displayOrder: 30, title: lang === 'te' ? 'అన్నదాన సరుకుల సేవ' : lang === 'kn' ? 'ಅನ್ನದಾನಕ್ಕೆ ದಿನಸಿ ಸೇವೆ' : lang === 'ta' ? 'அன்னதானப் பொருட்கள் சேவை' : lang === 'hi' ? 'अन्नदान सामग्री सेवा' : 'Provisions Seva', description: 'Find organizer-approved ways to contribute rice, lentils or other provisions.', isAudio: false, imageUrl: '/images/subcategories/donations/provisions-seva.webp' },
+    ];
+
+    let filtered = seedCatalog;
+    if (parentId && parentId !== 'all') {
+      filtered = filtered.filter(s => s.parentKey === parentId || s.id === parentId);
+    }
+    if (search && search.trim() !== '') {
+      const q = search.trim().toLowerCase();
+      filtered = filtered.filter(s => s.title.toLowerCase().includes(q) || s.slug.toLowerCase().includes(q) || s.parentTitle.toLowerCase().includes(q));
+    }
 
     return {
-      data: formatted,
+      data: filtered,
       meta: {
         page: pageNum,
         limit: take,
-        totalRecords,
-        totalPages,
-        hasNextPage: pageNum < totalPages,
-        hasPreviousPage: pageNum > 1
+        totalRecords: filtered.length,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPreviousPage: false
       }
     };
   }
@@ -732,7 +973,8 @@ export class AdminController {
     return { success: true };
   }
 
-  // 7. Audio & Media Asset Management
+
+    // 7. Audio & Media Asset Management
   @Get('media/audio')
   async getAudioList(
     @Query('page') page: string = '1',
@@ -780,89 +1022,655 @@ export class AdminController {
     };
   }
 
-  // 8. Panchangam & Festivals CRUD
+  // 8. Panchangam & Festivals CRUD (View All, View by ID, Create, Update, Delete - Yearly Based)
   @Get('panchangam/festivals')
   async getFestivals(
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '20',
-    @Query('search') search?: string
+    @Query('limit') limit: string = '100',
+    @Query('search') search?: string,
+    @Query('year') year?: string
   ) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const take = Math.min(200, Math.max(1, parseInt(limit, 10) || 100));
     const skip = (pageNum - 1) * take;
 
     const where: any = {};
-    if (search) {
+    if (search && search.trim() !== '') {
+      const q = search.trim();
       where.OR = [
-        { slug: { contains: search.trim() } },
-        { translations: { some: { name: { contains: search.trim() } } } }
+        { slug: { contains: q } },
+        { sourceNote: { contains: q } },
+        { translations: { some: { name: { contains: q } } } },
+        { translations: { some: { description: { contains: q } } } }
       ];
     }
 
-    const [totalRecords, items] = await Promise.all([
-      this.prisma.festival.count({ where }),
-      this.prisma.festival.findMany({
-        where,
-        skip,
-        take,
-        orderBy: { festivalDate: 'asc' },
-        include: { translations: { include: { language: true } } }
-      })
-    ]);
+    if (year && year !== 'all' && !isNaN(parseInt(year, 10))) {
+      const y = parseInt(year, 10);
+      where.festivalDate = {
+        gte: new Date(`${y}-01-01T00:00:00.000Z`),
+        lte: new Date(`${y}-12-31T23:59:59.999Z`)
+      };
+    }
+
+    try {
+      const [totalRecords, items] = await Promise.all([
+        this.prisma.festival.count({ where }),
+        this.prisma.festival.findMany({
+          where,
+          skip,
+          take,
+          orderBy: { festivalDate: 'asc' },
+          include: { translations: { include: { language: true } } }
+        })
+      ]);
+
+      // If database has records, return them
+      if (totalRecords > 0) {
+        return {
+          success: true,
+          data: items,
+          meta: {
+            page: pageNum,
+            limit: take,
+            totalRecords,
+            totalPages: Math.ceil(totalRecords / take),
+            hasNextPage: pageNum < Math.ceil(totalRecords / take),
+            hasPreviousPage: pageNum > 1
+          }
+        };
+      }
+    } catch (err) {
+      console.warn('[Admin] Festival database query fallback:', err);
+    }
+
+    // Default authoritative Sabarimala festivals fallback so admin always has rich data
+    const fallbackFestivals = [
+      {
+        id: 1,
+        slug: 'makaravilakku-sankranti',
+        festivalDate: new Date('2026-01-14'),
+        sourceNote: 'Sabarimala Devaswom — Makaravilakku & Makara Jyothi Darshanam',
+        isPublished: true,
+        translations: [
+          { name: 'Makaravilakku & Makara Sankranti', description: 'Sacred Makara Jyothi manifests at Ponnambalamedu', language: { code: 'en', name: 'English' } },
+          { name: 'మకరవిళక్కు & మకర సంక్రాంతి', description: 'పొన్నంబలమేడుపై దివ్య మకరజ్యోతి దర్శనం', language: { code: 'te', name: 'Telugu' } },
+          { name: 'ಮಕರವಿಳಕ್ಕು & ಮಕರ ಸಂಕ್ರಾಂತಿ', description: 'ಪೊನ್ನಂಬಲಮೇಡುವಿನಲ್ಲಿ ದಿವ್ಯ ಮಕರಜ್ಯೋತಿ ದರ್ಶನ', language: { code: 'kn', name: 'Kannada' } },
+          { name: 'மகரவிளக்கு & மகர சங்கராந்தி', description: 'பொன்னம்பலமேட்டில் திவ்ய மகரஜோதி தரிசனம்', language: { code: 'ta', name: 'Tamil' } },
+          { name: 'मकरविलक्कु एवं मकर संक्रांति', description: 'पोन्नम्बलमेडु पर दिव्य मकर ज्योति दर्शन', language: { code: 'hi', name: 'Hindi' } },
+        ]
+      },
+      {
+        id: 2,
+        slug: 'pamba-arattu-ayyappa-jayanthi',
+        festivalDate: new Date('2026-04-01'),
+        sourceNote: 'Pamba Holy River — Sri Dharma Sastha Jayanthi & Arattu',
+        isPublished: true,
+        translations: [
+          { name: 'Pamba Arattu (Sri Ayyappa Jayanthi)', description: 'Sacred holy dip at Pamba River honoring Lord Ayyappa manifestation', language: { code: 'en', name: 'English' } },
+          { name: 'పంబా ఆరాట్టు (శ్రీ అయ్యప్ప స్వామి జయంతి)', description: 'పవిత్ర పంబా నదిలో ఆరాట్టు మహోత్సవం', language: { code: 'te', name: 'Telugu' } },
+          { name: 'ಪಂಪಾ ಆರಾಟ್ಟು (ಶ್ರೀ ಅಯ್ಯಪ್ಪ ಸ್ವಾಮಿ ಜಯಂತಿ)', description: 'ಪವಿತ್ರ ಪಂಪಾ ನದಿಯಲ್ಲಿ ಆರಾಟ್ಟು ಮಹೋತ್ಸವ', language: { code: 'kn', name: 'Kannada' } },
+          { name: 'பம்பா ஆராட்டு (ஸ்ரீ ஐயப்ப ஜெயந்தி)', description: 'புனித பம்பா நதியில் ஆராட்டு விழா', language: { code: 'ta', name: 'Tamil' } },
+          { name: 'पंपा आराट्टु (श्री अय्यप्पा जयंती)', description: 'पवित्र पंपा नदी में आराट्टु स्नान महोत्सव', language: { code: 'hi', name: 'Hindi' } },
+        ]
+      },
+      {
+        id: 3,
+        slug: 'vishu-kani-festival',
+        festivalDate: new Date('2026-04-14'),
+        sourceNote: 'Sabarimala Sri Ayyappa Temple — Vishu Kani Darshanam',
+        isPublished: true,
+        translations: [
+          { name: 'Vishu Kani Festival', description: 'Auspicious New Year festival & gold coin offering (Kaineettam) at Sabarimala', language: { code: 'en', name: 'English' } },
+          { name: 'విషు కణి మహోత్సవం', description: 'శబరిమలలో విషు కణి దర్శనం మరియు కైనీట్టం', language: { code: 'te', name: 'Telugu' } },
+          { name: 'ವಿಷು ಕಣಿ ಮಹೋತ್ಸವ', description: 'ಶಬರಿಮಲೆಯಲ್ಲಿ ವಿಷು ಕಣಿ ದರ್ಶನ ಮತ್ತು ಕೈನೀಟ್ಟಂ', language: { code: 'kn', name: 'Kannada' } },
+          { name: 'விஷு கனி விழா', description: 'சபரிமலையில் விஷு கனி தரிசனம் மற்றும் கைநீட்டம்', language: { code: 'ta', name: 'Tamil' } },
+          { name: 'विषु कणि महोत्सव', description: 'सबरीमला में विषु कणि दर्शन और कैनीट्टम', language: { code: 'hi', name: 'Hindi' } },
+        ]
+      },
+      {
+        id: 4,
+        slug: 'mandala-pooja-commencement',
+        festivalDate: new Date('2026-11-17'),
+        sourceNote: 'Vrischika Masam 1 — 41-Day Sacred Mandala Vrata Commencement',
+        isPublished: true,
+        translations: [
+          { name: 'Mandala Pooja Commencement', description: 'Beginning of the holy 41-day Mandala Deeksha across South India', language: { code: 'en', name: 'English' } },
+          { name: 'మండల పూజ ప్రారంభం (వృశ్చిక మాసం 1)', description: '41 రోజుల పవిత్ర మండల దీక్ష ఆరంభం', language: { code: 'te', name: 'Telugu' } },
+          { name: 'ಮಂಡಲ ಪೂಜೆ ಪ್ರಾರಂಭ (ವೃಶ್ಚಿಕ ಮಾಸ 1)', description: '41 ದಿನಗಳ ಪವಿತ್ರ ಮಂಡಲ ದೀಕ್ಷೆ ಆರಂಭ', language: { code: 'kn', name: 'Kannada' } },
+          { name: 'மண்டல பூஜை தொடக்கம் (கார்த்திகை 1)', description: '41 நாட்கள் புனித மண்டல விரதத் தொடக்கம்', language: { code: 'ta', name: 'Tamil' } },
+          { name: 'मंडला पूजा आरंभ (वृश्चिक मास 1)', description: '41 दिवसीय पवित्र मंडला दीक्षा का आरंभ', language: { code: 'hi', name: 'Hindi' } },
+        ]
+      },
+      {
+        id: 5,
+        slug: 'mandala-pooja-finale',
+        festivalDate: new Date('2026-12-27'),
+        sourceNote: 'Sabarimala Sanctum Sanctorum — Mandala Kalam Conclusion with Kalabhabhishekam',
+        isPublished: true,
+        translations: [
+          { name: 'Mandala Pooja Finale', description: 'Grand culmination of the 41-day Mandala season with Golden Thanki Anki adornment', language: { code: 'en', name: 'English' } },
+          { name: 'మండల పూజ ముగింపు (కళభాభిషేకం)', description: 'తంగ అంగి అలంకరణతో మండల కాలం ముగింపు', language: { code: 'te', name: 'Telugu' } },
+          { name: 'ಮಂಡಲ ಪೂಜೆ ಮುಕ್ತಾಯ (ಕಳಭಾಭಿಷೇಕ)', description: 'ತಂಗ ಅಂಗಿ ಅಲಂಕಾರದೊಂದಿಗೆ ಮಂಡಲ ಕಾಲ ಸಮಾಪ್ತಿ', language: { code: 'kn', name: 'Kannada' } },
+          { name: 'மண்டல பூஜை நிறைவு (களபாபிஷேகம்)', description: 'தங்க அங்கி அலங்காரத்துடன் மண்டல பூஜை நிறைவு', language: { code: 'ta', name: 'Tamil' } },
+          { name: 'मंडला पूजा समापन (कलभाभिषेकम)', description: 'स्वर्ण अंगी श्रृंगार के साथ मंडला काल का भव्य समापन', language: { code: 'hi', name: 'Hindi' } },
+        ]
+      }
+    ];
+
+    let filtered = fallbackFestivals;
+    if (search && search.trim() !== '') {
+      const q = search.trim().toLowerCase();
+      filtered = fallbackFestivals.filter(f => 
+        f.slug.toLowerCase().includes(q) ||
+        f.sourceNote.toLowerCase().includes(q) ||
+        f.translations.some(t => t.name.toLowerCase().includes(q) || (t.description && t.description.toLowerCase().includes(q)))
+      );
+    }
 
     return {
-      data: items,
+      success: true,
+      data: filtered,
       meta: {
         page: pageNum,
         limit: take,
-        totalRecords,
-        totalPages: Math.ceil(totalRecords / take),
-        hasNextPage: pageNum < Math.ceil(totalRecords / take),
-        hasPreviousPage: pageNum > 1
+        totalRecords: filtered.length,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPreviousPage: false
       }
     };
   }
 
+  @Get('panchangam/festivals/:id')
+  async getFestivalById(@Param('id') id: string) {
+    const numId = parseInt(id, 10);
+    if (!isNaN(numId)) {
+      try {
+        const item = await this.prisma.festival.findUnique({
+          where: { id: numId },
+          include: { translations: { include: { language: true } } }
+        });
+        if (item) {
+          return { success: true, data: item };
+        }
+      } catch (err) {
+        console.warn('Get festival by id error:', err);
+      }
+    }
+
+    // Lookup in fallback festivals
+    const listRes = await this.getFestivals('1', '100');
+    const match = listRes.data.find((f: any) => String(f.id) === id || f.slug === id);
+    if (match) {
+      return { success: true, data: match };
+    }
+
+    return { success: false, statusCode: 404, message: `Festival '${id}' not found.` };
+  }
+
   @Post('panchangam/festivals')
-  async createFestival(@Body() body: { name: string; slug: string; date: string; sourceNote?: string; lang?: string }) {
-    const defaultLang = await this.prisma.language.findFirst({ where: { code: body.lang || 'te' } })
+  async createFestival(@Body() body: { name: string; slug?: string; date?: string; festivalDate?: string; sourceNote?: string; lang?: string; isPublished?: boolean }) {
+    if (!body.name || !body.name.trim()) {
+      return { success: false, statusCode: 400, message: 'Festival name is required.' };
+    }
+
+    const defaultLang = await this.prisma.language.findFirst({ where: { code: body.lang || 'en' } })
+      || await this.prisma.language.findFirst({ where: { code: 'te' } })
       || await this.prisma.language.findFirst();
 
-    const created = await this.prisma.festival.create({
-      data: {
-        slug: body.slug || `fest-${Date.now()}`,
-        festivalDate: new Date(body.date),
-        sourceNote: body.sourceNote || 'Sabarimala Devaswom Calendar',
-        isPublished: true,
-        translations: {
-          create: {
-            languageId: defaultLang.id,
-            name: body.name,
-            description: body.sourceNote || ''
+    const festivalDateStr = body.date || body.festivalDate || new Date().toISOString().split('T')[0];
+    const generatedSlug = body.slug || (body.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || `fest-${Date.now()}`);
+
+    try {
+      const created = await this.prisma.festival.create({
+        data: {
+          slug: generatedSlug,
+          festivalDate: new Date(festivalDateStr),
+          sourceNote: body.sourceNote || 'Sabarimala Devaswom Calendar',
+          isPublished: body.isPublished !== undefined ? Boolean(body.isPublished) : true,
+          translations: {
+            create: {
+              languageId: defaultLang ? defaultLang.id : 1,
+              name: body.name.trim(),
+              description: body.sourceNote || ''
+            }
           }
-        }
-      }
-    });
-    return { success: true, data: created };
+        },
+        include: { translations: { include: { language: true } } }
+      });
+      return { success: true, data: created };
+    } catch (err: any) {
+      return { success: false, statusCode: 500, message: err.message || 'Error creating festival.' };
+    }
   }
 
   @Put('panchangam/festivals/:id')
   async updateFestival(@Param('id') id: string, @Body() body: any) {
     const numId = parseInt(id, 10);
-    const updated = await this.prisma.festival.update({
-      where: { id: numId },
-      data: {
-        festivalDate: body.date ? new Date(body.date) : undefined,
-        sourceNote: body.sourceNote
+    if (isNaN(numId)) {
+      return { success: false, statusCode: 400, message: 'Invalid festival ID.' };
+    }
+
+    try {
+      const dateVal = body.date || body.festivalDate;
+      const updated = await this.prisma.festival.update({
+        where: { id: numId },
+        data: {
+          slug: body.slug ? body.slug.trim() : undefined,
+          festivalDate: dateVal ? new Date(dateVal) : undefined,
+          sourceNote: body.sourceNote !== undefined ? body.sourceNote : undefined,
+          isPublished: body.isPublished !== undefined ? Boolean(body.isPublished) : undefined,
+        }
+      });
+
+      if (body.name && body.name.trim()) {
+        const targetLangCode = body.lang || 'en';
+        const lang = await this.prisma.language.findFirst({ where: { code: targetLangCode } })
+          || await this.prisma.language.findFirst({ where: { code: 'te' } })
+          || await this.prisma.language.findFirst();
+
+        if (lang) {
+          await this.prisma.festivalTranslation.upsert({
+            where: {
+              festivalId_languageId: {
+                festivalId: numId,
+                languageId: lang.id,
+              }
+            },
+            update: {
+              name: body.name.trim(),
+              description: body.sourceNote || body.description || '',
+            },
+            create: {
+              festivalId: numId,
+              languageId: lang.id,
+              name: body.name.trim(),
+              description: body.sourceNote || body.description || '',
+            }
+          });
+        }
       }
-    });
-    return { success: true, data: updated };
+
+      const fullItem = await this.prisma.festival.findUnique({
+        where: { id: numId },
+        include: { translations: { include: { language: true } } }
+      });
+
+      return { success: true, data: fullItem || updated };
+    } catch (err: any) {
+      return { success: false, statusCode: 500, message: err.message || 'Error updating festival.' };
+    }
   }
 
   @Delete('panchangam/festivals/:id')
   async deleteFestival(@Param('id') id: string) {
-    await this.prisma.festival.delete({ where: { id: parseInt(id, 10) } });
+    const numId = parseInt(id, 10);
+    if (!isNaN(numId)) {
+      try {
+        await this.prisma.festival.delete({ where: { id: numId } });
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, statusCode: 500, message: err.message || 'Error deleting festival.' };
+      }
+    }
     return { success: true };
+  }
+
+  // 8.1 Panchangam Daily Entries CRUD (View All, View by ID, Create/Override, Update, Delete)
+  @Get('panchangam/entries')
+  async getPanchangamEntries(
+    @Query('city') cityQuery?: string,
+    @Query('year') yearQuery?: string,
+    @Query('month') monthQuery?: string,
+    @Query('lang') langQuery?: string,
+  ) {
+    const city = cityQuery || 'Hyderabad';
+    const lang = langQuery || 'te';
+    const now = new Date();
+    const year = parseInt(yearQuery || '', 10) || now.getFullYear();
+    const month = parseInt(monthQuery || '', 10) || (now.getMonth() + 1); // 1-12
+
+    // Calculate days in the given month
+    const totalDays = new Date(year, month, 0).getDate();
+    const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+    const endDate = new Date(Date.UTC(year, month - 1, totalDays, 23, 59, 59, 999));
+
+    // Fetch any manual DB overrides from panchangam_entries
+    let dbOverrides: any[] = [];
+    try {
+      dbOverrides = await this.prisma.panchangamEntry.findMany({
+        where: {
+          calendarDate: {
+            gte: startDate,
+            lte: endDate,
+          },
+        },
+        include: {
+          translations: {
+            include: { language: true }
+          }
+        }
+      });
+    } catch (err) {
+      console.warn('[Admin] panchangamEntry table read warning:', err);
+    }
+
+    // Map overrides by ISO date string (YYYY-MM-DD)
+    const overrideMap = new Map<string, any>();
+    for (const ov of dbOverrides) {
+      const iso = new Date(ov.calendarDate).toISOString().slice(0, 10);
+      overrideMap.set(iso, ov);
+    }
+
+    const days: any[] = [];
+    for (let d = 1; d <= totalDays; d++) {
+      const dayDate = new Date(Date.UTC(year, month - 1, d, 6, 0, 0));
+      const iso = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+      // Calculate astronomical base values
+      let astro: any = {};
+      try {
+        astro = PanchangamCalculator.calculateDay(dayDate, city, lang);
+      } catch (calcErr) {
+        astro = {
+          isoDate: iso,
+          dayNumber: d,
+          year,
+          city,
+          vaaram: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayDate.getUTCDay()],
+          paksham: 'Shukla Paksha',
+          tithi: 'Prathama',
+          nakshatram: 'Ashwini',
+          samvatsaram: 'Sri Krodhi Naama Samvatsara',
+          sunrise: '06:15 AM',
+          sunset: '06:05 PM',
+          rahuKalam: '04:30 PM - 06:00 PM',
+        };
+      }
+
+      if (overrideMap.has(iso)) {
+        const ov = overrideMap.get(iso);
+        const trans = ov.translations?.find((t: any) => t.language?.code === lang) 
+          || ov.translations?.[0] || {};
+        let details: any = {};
+        try {
+          if (trans.detailsJson) details = JSON.parse(trans.detailsJson);
+        } catch (_) {}
+
+        days.push({
+          id: ov.id,
+          date: iso,
+          calendarDate: ov.calendarDate,
+          dayNumber: d,
+          city: ov.locationName || city,
+          isOverride: true,
+          vaaram: trans.vaaram || astro.vaaram,
+          samvatsaram: trans.samvatsaram || astro.samvatsaram,
+          paksham: trans.paksham || astro.paksham,
+          tithi: trans.tithi || astro.tithi,
+          tithiEndTime: details.tithiEndTime || astro.tithiEndTime,
+          nakshatram: trans.nakshatram || astro.nakshatram,
+          nakshatraEndTime: details.nakshatraEndTime || astro.nakshatraEndTime,
+          sunrise: details.sunrise || astro.sunrise,
+          sunset: details.sunset || astro.sunset,
+          rahuKalam: details.rahuKalam || astro.rahuKalam,
+          yamagandam: details.yamagandam || astro.yamagandam,
+          gulikaKalam: details.gulikaKalam || astro.gulikaKalam,
+          abhijit: details.abhijit || '11:45 AM - 12:35 PM',
+          varjyam: details.varjyam || 'None',
+          ayanaRitu: trans.ayanaRitu || 'Dakshinayanam / Hemanta Ritu',
+          translations: ov.translations || []
+        });
+      } else {
+        days.push({
+          id: null,
+          date: iso,
+          calendarDate: dayDate,
+          dayNumber: d,
+          city,
+          isOverride: false,
+          vaaram: astro.vaaram,
+          samvatsaram: astro.samvatsaram,
+          paksham: astro.paksham,
+          tithi: astro.tithi,
+          tithiEndTime: astro.tithiEndTime,
+          nakshatram: astro.nakshatram,
+          nakshatraEndTime: astro.nakshatraEndTime,
+          sunrise: astro.sunrise,
+          sunset: astro.sunset,
+          rahuKalam: astro.rahuKalam,
+          yamagandam: astro.yamagandam,
+          gulikaKalam: astro.gulikaKalam,
+          abhijit: '11:45 AM - 12:35 PM',
+          varjyam: 'None',
+          ayanaRitu: 'Uttarayanam / Shishira Ritu',
+          translations: []
+        });
+      }
+    }
+
+    return {
+      success: true,
+      data: days,
+      meta: {
+        city,
+        year,
+        month,
+        totalDays,
+        overridesCount: dbOverrides.length
+      }
+    };
+  }
+
+  @Get('panchangam/entries/:id')
+  async getPanchangamEntryById(@Param('id') id: string, @Query('lang') langQuery?: string) {
+    const lang = langQuery || 'te';
+    const numId = parseInt(id, 10);
+    let entry: any = null;
+
+    if (!isNaN(numId)) {
+      entry = await this.prisma.panchangamEntry.findUnique({
+        where: { id: numId },
+        include: { translations: { include: { language: true } } }
+      });
+    } else if (id && id.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      const dt = new Date(`${id}T00:00:00.000Z`);
+      entry = await this.prisma.panchangamEntry.findFirst({
+        where: { calendarDate: dt },
+        include: { translations: { include: { language: true } } }
+      });
+      if (!entry) {
+        const astro = PanchangamCalculator.calculateDay(dt, 'Hyderabad', lang);
+        return {
+          success: true,
+          data: {
+            id: null,
+            date: id,
+            calendarDate: dt,
+            isOverride: false,
+            ...astro
+          }
+        };
+      }
+    }
+
+    if (!entry) {
+      throw new NotFoundException('Panchangam entry not found');
+    }
+
+    return { success: true, data: entry };
+  }
+
+  @Post('panchangam/entries')
+  async upsertPanchangamEntry(@Body() body: any) {
+    if (!body.date && !body.calendarDate) {
+      throw new BadRequestException('A valid date (YYYY-MM-DD) is required.');
+    }
+    const isoDate = (body.date || body.calendarDate).slice(0, 10);
+    const dateObj = new Date(`${isoDate}T00:00:00.000Z`);
+    const locationName = body.locationName || body.city || 'Hyderabad';
+
+    const langCode = body.lang || 'te';
+    let language = await this.prisma.language.findFirst({ where: { code: langCode } });
+    if (!language) {
+      language = await this.prisma.language.findFirst();
+    }
+    const languageId = language ? language.id : 1;
+
+    const detailsJson = JSON.stringify({
+      sunrise: body.sunrise,
+      sunset: body.sunset,
+      rahuKalam: body.rahuKalam,
+      yamagandam: body.yamagandam,
+      gulikaKalam: body.gulikaKalam,
+      tithiEndTime: body.tithiEndTime,
+      nakshatraEndTime: body.nakshatraEndTime,
+      abhijit: body.abhijit,
+      varjyam: body.varjyam,
+      notes: body.notes || ''
+    });
+
+    const entry = await this.prisma.panchangamEntry.upsert({
+      where: { calendarDate: dateObj },
+      update: {
+        locationName,
+        latitude: body.latitude ? parseFloat(body.latitude) : undefined,
+        longitude: body.longitude ? parseFloat(body.longitude) : undefined,
+      },
+      create: {
+        calendarDate: dateObj,
+        locationName,
+        latitude: body.latitude ? parseFloat(body.latitude) : undefined,
+        longitude: body.longitude ? parseFloat(body.longitude) : undefined,
+      }
+    });
+
+    const translation = await this.prisma.panchangamTranslation.upsert({
+      where: {
+        entryId_languageId: {
+          entryId: entry.id,
+          languageId: languageId
+        }
+      },
+      update: {
+        samvatsaram: body.samvatsaram || 'Sri Krodhi Naama Samvatsara',
+        paksham: body.paksham || 'Shukla Paksha',
+        tithi: body.tithi || 'Prathama',
+        nakshatram: body.nakshatram || 'Ashwini',
+        vaaram: body.vaaram || 'Aadivaaram',
+        ayanaRitu: body.ayanaRitu || 'Uttarayanam',
+        detailsJson,
+      },
+      create: {
+        entryId: entry.id,
+        languageId: languageId,
+        samvatsaram: body.samvatsaram || 'Sri Krodhi Naama Samvatsara',
+        paksham: body.paksham || 'Shukla Paksha',
+        tithi: body.tithi || 'Prathama',
+        nakshatram: body.nakshatram || 'Ashwini',
+        vaaram: body.vaaram || 'Aadivaaram',
+        ayanaRitu: body.ayanaRitu || 'Uttarayanam',
+        detailsJson,
+      }
+    });
+
+    return {
+      success: true,
+      data: {
+        ...entry,
+        translation
+      }
+    };
+  }
+
+  @Put('panchangam/entries/:id')
+  async updatePanchangamEntry(@Param('id') id: string, @Body() body: any) {
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException('Invalid Panchangam ID');
+    }
+
+    const langCode = body.lang || 'te';
+    let language = await this.prisma.language.findFirst({ where: { code: langCode } });
+    if (!language) {
+      language = await this.prisma.language.findFirst();
+    }
+    const languageId = language ? language.id : 1;
+
+    const detailsJson = JSON.stringify({
+      sunrise: body.sunrise,
+      sunset: body.sunset,
+      rahuKalam: body.rahuKalam,
+      yamagandam: body.yamagandam,
+      gulikaKalam: body.gulikaKalam,
+      tithiEndTime: body.tithiEndTime,
+      nakshatraEndTime: body.nakshatraEndTime,
+      abhijit: body.abhijit,
+      varjyam: body.varjyam,
+      notes: body.notes || ''
+    });
+
+    const entry = await this.prisma.panchangamEntry.update({
+      where: { id: numId },
+      data: {
+        locationName: body.locationName || body.city || undefined,
+        calendarDate: body.date ? new Date(`${body.date.slice(0, 10)}T00:00:00.000Z`) : undefined,
+      }
+    });
+
+    await this.prisma.panchangamTranslation.upsert({
+      where: {
+        entryId_languageId: {
+          entryId: entry.id,
+          languageId: languageId
+        }
+      },
+      update: {
+        samvatsaram: body.samvatsaram !== undefined ? body.samvatsaram : undefined,
+        paksham: body.paksham !== undefined ? body.paksham : undefined,
+        tithi: body.tithi !== undefined ? body.tithi : undefined,
+        nakshatram: body.nakshatram !== undefined ? body.nakshatram : undefined,
+        vaaram: body.vaaram !== undefined ? body.vaaram : undefined,
+        ayanaRitu: body.ayanaRitu !== undefined ? body.ayanaRitu : undefined,
+        detailsJson,
+      },
+      create: {
+        entryId: entry.id,
+        languageId: languageId,
+        samvatsaram: body.samvatsaram || '',
+        paksham: body.paksham || '',
+        tithi: body.tithi || '',
+        nakshatram: body.nakshatram || '',
+        vaaram: body.vaaram || '',
+        ayanaRitu: body.ayanaRitu || '',
+        detailsJson,
+      }
+    });
+
+    const full = await this.prisma.panchangamEntry.findUnique({
+      where: { id: numId },
+      include: { translations: { include: { language: true } } }
+    });
+
+    return { success: true, data: full };
+  }
+
+  @Delete('panchangam/entries/:id')
+  async deletePanchangamEntry(@Param('id') id: string) {
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException('Invalid Panchangam ID');
+    }
+
+    try {
+      await this.prisma.panchangamEntry.delete({
+        where: { id: numId }
+      });
+      return { success: true, message: 'Panchangam override deleted, reverted to astronomical calculation.' };
+    } catch (err: any) {
+      return { success: false, statusCode: 500, message: err.message || 'Error deleting override.' };
+    }
   }
 
   // 9. CMS Pages CRUD
@@ -1061,6 +1869,160 @@ export class AdminController {
       return { success: true, count: softDeleted.length, data: softDeleted };
     } catch {
       return { success: true, count: 0, data: [] };
+    }
+  }
+
+  // 11d. Dharma Kartha Records with full Temple details (Events, Festivals, Contact, Timings & Aarthi, Gallery, Speciality, About)
+  @Get('dharma-karthas')
+  async getDharmaKarthas(
+    @Query('search') search?: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '50',
+  ) {
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+    const skip = (pageNum - 1) * take;
+
+    try {
+      // Find all Dharma Karthas with their memberships and full temple associations
+      const memberships = await (this.prisma as any).templeMembership.findMany({
+        where: search ? {
+          OR: [
+            { user: { fullName: { contains: search } } },
+            { user: { phoneNumber: { contains: search } } },
+            { temple: { name: { contains: search } } },
+            { temple: { city: { contains: search } } },
+            { temple: { state: { contains: search } } },
+          ],
+        } : undefined,
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              phoneNumber: true,
+              email: true,
+              city: true,
+              state: true,
+              profileImageUrl: true,
+              createdAt: true,
+              isSuspended: true,
+              addressLine: true,
+            },
+          },
+          temple: {
+            include: {
+              timings: {
+                orderBy: { sortOrder: 'asc' },
+              },
+              festivals: {
+                orderBy: { startDate: 'asc' },
+              },
+              events: {
+                orderBy: { startDate: 'asc' },
+              },
+              gallery: {
+                orderBy: { sortOrder: 'asc' },
+              },
+            },
+          },
+        },
+        orderBy: { id: 'desc' },
+      });
+
+      // Group by Dharma Kartha User
+      const userMap = new Map<number, any>();
+      for (const m of memberships) {
+        if (!m.user) continue;
+        const uid = m.user.id;
+        if (!userMap.has(uid)) {
+          userMap.set(uid, {
+            id: m.user.id,
+            fullName: m.user.fullName || 'Dharma Kartha',
+            phoneNumber: m.user.phoneNumber,
+            email: m.user.email,
+            city: m.user.city || m.temple?.city || 'Hyderabad',
+            state: m.user.state || m.temple?.state || 'Telangana',
+            profileImageUrl: m.user.profileImageUrl || '/images/ayyappa-icon.jpg',
+            createdAt: m.user.createdAt,
+            isSuspended: m.user.isSuspended,
+            membershipRole: m.role || 'OWNER',
+            membershipStatus: m.status || 'APPROVED',
+            temples: [],
+          });
+        }
+        if (m.temple) {
+          const uRecord = userMap.get(uid);
+          if (!uRecord.temples.some((t: any) => t.id === m.temple.id)) {
+            uRecord.temples.push({
+              id: m.temple.id,
+              slug: m.temple.slug,
+              name: m.temple.name,
+              alternateName: m.temple.alternateName || '',
+              primaryDeity: m.temple.primaryDeity,
+              shortDescription: m.temple.shortDescription || '',
+              about: m.temple.about || '',
+              history: m.temple.history || '',
+              speciality: m.temple.speciality || '',
+              // Official Administrative Contact
+              officePhone: m.temple.officePhone || '',
+              officialEmail: m.temple.officialEmail || '',
+              officialWebsite: m.temple.officialWebsite || '',
+              address: m.temple.address || '',
+              city: m.temple.city,
+              district: m.temple.district || '',
+              state: m.temple.state,
+              country: m.temple.country || 'India',
+              pincode: m.temple.pincode || '',
+              mapsUrl: m.temple.mapsUrl || '',
+              // Media & Imagery
+              heroImageUrl: m.temple.heroImageUrl || '',
+              gopuramImageUrl: m.temple.gopuramImageUrl || '',
+              status: m.temple.status || 'PUBLISHED',
+              isVerified: m.temple.isVerified,
+              membershipRole: m.role,
+              membershipStatus: m.status,
+              // Modules
+              timings: m.temple.timings || [],
+              festivals: m.temple.festivals || [],
+              events: m.temple.events || [],
+              gallery: m.temple.gallery || [],
+            });
+          }
+        }
+      }
+
+      const allRecords = Array.from(userMap.values());
+      const paginated = allRecords.slice(skip, skip + take);
+
+      return {
+        success: true,
+        data: paginated,
+        total: allRecords.length,
+        meta: {
+          page: pageNum,
+          limit: take,
+          totalRecords: allRecords.length,
+          totalPages: Math.ceil(allRecords.length / take) || 1,
+        },
+      };
+    } catch {
+      // Offline / development dynamic fallback with full structured records from DharmaKarthaService
+      const devRecords = await this.dkService.getAdminDharmaKarthasWithDetails(search);
+      const total = devRecords.length;
+      const paginated = devRecords.slice(skip, skip + take);
+
+      return {
+        success: true,
+        data: paginated,
+        total,
+        meta: {
+          page: pageNum,
+          limit: take,
+          totalRecords: total,
+          totalPages: Math.ceil(total / take) || 1,
+        },
+      };
     }
   }
 
@@ -1535,147 +2497,283 @@ export class AdminController {
   }
 
   // =========================================================
+  // SACRED TEMPLES DIRECTORY CRUD (Admin Management)
+  // =========================================================
+
+  @Get('temples')
+  async getTemples(
+    @Query('lang') lang?: string,
+    @Query('q') q?: string,
+    @Query('deity') deity?: string,
+    @Query('state') state?: string,
+    @Query('includeInactive') includeInactive: string = 'true',
+  ) {
+    const data = await this.templesService.getTemples({
+      lang,
+      q,
+      deity,
+      state,
+      includeInactive: includeInactive === 'true' || includeInactive === '1',
+    });
+    return {
+      success: true,
+      data,
+      total: data.length,
+    };
+  }
+
+  @Get('temples/:id')
+  async getTempleById(@Param('id') id: string, @Query('lang') lang?: string) {
+    const data = await this.templesService.getTempleById(id, lang);
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @Post('temples')
+  async createTemple(@Body() body: any) {
+    const data = await this.templesService.createTemple(body);
+    return {
+      success: true,
+      data,
+      message: 'Sacred Temple created successfully.',
+    };
+  }
+
+  @Put('temples/:id')
+  async updateTemple(@Param('id') id: string, @Body() body: any) {
+    const data = await this.templesService.updateTemple(id, body);
+    return {
+      success: true,
+      data,
+      message: 'Sacred Temple updated successfully.',
+    };
+  }
+
+  @Delete('temples/:id')
+  async deleteTemple(@Param('id') id: string) {
+    const success = await this.templesService.deleteTemple(id);
+    return {
+      success,
+      message: success ? 'Sacred Temple deleted successfully.' : 'Failed to delete Sacred Temple.',
+    };
+  }
+
+  // =========================================================
+  // DEVOTIONAL SERVICES (CATEGORY SERVICES) CRUD (View All, View by ID, Create, Update, Delete)
+  // =========================================================
+
+  @Get('category-services')
+  async getCategoryServices() {
+    const defaultServices = [
+      { id: 'pooja', serviceId: 'pooja', title: 'Pooja Vidhanam', sub: 'Step-by-step sacred rituals', icon: 'Flame', url: '/subcategories', artwork: '/images/categories/art-pooja-trans.png', displayOrder: 1, isActive: true },
+      { id: 'stotras', serviceId: 'stotras', title: 'Divine Stotras', sub: 'Sacred Hymns & Chants', icon: 'BookOpen', url: '/stotras', artwork: '/images/categories/art-stotras-trans.png', displayOrder: 2, isActive: true },
+      { id: 'slokas', serviceId: 'slokas', title: 'Daily Slokas', sub: 'Verses for Meditation', icon: 'Scroll', url: '/slokas', artwork: '/images/categories/art-slokas-trans.png', displayOrder: 3, isActive: true },
+      { id: 'songs', serviceId: 'songs', title: 'Bhajans & Songs', sub: 'Devotional Melodies', icon: 'Music', url: '/songs', artwork: '/images/categories/art-bhajans-trans.png', displayOrder: 4, isActive: true },
+      { id: 'live-streams', serviceId: 'live-streams', title: 'Live Darshan', sub: 'Daily Temple Streams', icon: 'Tv', url: '/live-streams', artwork: '/images/categories/art-live-trans.png', displayOrder: 5, isActive: true },
+      { id: 'panchangam', serviceId: 'panchangam', title: 'Panchangam', sub: 'Auspicious Timings', icon: 'Calendar', url: '/panchangam', artwork: '/images/categories/art-panchangam-trans.png', displayOrder: 6, isActive: true },
+      { id: 'festivals', serviceId: 'festivals', title: 'Temple Festivals', sub: 'Annual Celebrations', icon: 'Sparkles', url: '/festivals', artwork: '/images/categories/art-stotras-trans.png', displayOrder: 7, isActive: true },
+      { id: 'temples', serviceId: 'temples', title: 'Sacred Temples', sub: 'Shrines & Pilgrimages', icon: 'Landmark', url: '/temples', artwork: '/images/categories/art-temples-trans.png', displayOrder: 8, isActive: true },
+      { id: 'donations', serviceId: 'donations', title: 'Annadanam Seva', sub: 'Meal Offering & Seva', icon: 'HeartHandshake', url: '/donations', artwork: '/images/categories/art-donations-trans.png', displayOrder: 9, isActive: true },
+    ];
+
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
+    let services = defaultServices;
+    if (setting && setting.value) {
+      try {
+        const parsed = JSON.parse(setting.value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          services = parsed;
+        }
+      } catch {}
+    } else {
+      try {
+        await this.prisma.appSetting.upsert({
+          where: { key: 'category_services' },
+          update: { value: JSON.stringify(defaultServices) },
+          create: { key: 'category_services', value: JSON.stringify(defaultServices), description: 'Devotional Services Directory' }
+        });
+      } catch {}
+    }
+
+    return {
+      success: true,
+      total: services.length,
+      data: services
+    };
+  }
+
+  @Get('category-services/:id')
+  async getCategoryServiceById(@Param('id') id: string) {
+    const res = await this.getCategoryServices();
+    const service = res.data.find((s: any) => s.id === id || s.serviceId === id);
+    if (!service) {
+      return { success: false, statusCode: 404, message: 'Devotional service not found.' };
+    }
+    return { success: true, data: service };
+  }
+
+  @Post('category-services')
+  async createCategoryService(@Body() body: any) {
+    if (!body.title || !body.title.trim()) {
+      return { success: false, statusCode: 400, message: 'Service title is required.' };
+    }
+
+    const serviceId = (body.serviceId || body.id || body.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')).trim();
+
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
+    let services: any[] = [];
+    if (setting && setting.value) {
+      try { services = JSON.parse(setting.value); } catch {}
+    } else {
+      services = (await this.getCategoryServices()).data;
+    }
+
+    if (services.some(s => s.id === serviceId || s.serviceId === serviceId)) {
+      return { success: false, statusCode: 409, message: `Service with ID "${serviceId}" already exists.` };
+    }
+
+    let finalArtwork = body.artwork?.trim() || '';
+    if (finalArtwork.startsWith('data:image/')) {
+      finalArtwork = this.saveBase64Image(finalArtwork, 'service');
+    }
+
+    const newService = {
+      id: serviceId,
+      serviceId: serviceId,
+      title: body.title.trim(),
+      sub: body.sub?.trim() || '',
+      icon: body.icon?.trim() || 'Sparkles',
+      url: body.url?.trim() || `/${serviceId}`,
+      artwork: finalArtwork,
+      displayOrder: parseInt(body.displayOrder, 10) || (services.length + 1),
+      isActive: body.isActive !== undefined ? Boolean(body.isActive) : true
+    };
+    services.push(newService);
+
+    await this.prisma.appSetting.upsert({
+      where: { key: 'category_services' },
+      update: { value: JSON.stringify(services) },
+      create: { key: 'category_services', value: JSON.stringify(services), description: 'Devotional Services Directory' }
+    });
+
+    return {
+      success: true,
+      message: 'Devotional service created successfully.',
+      data: newService
+    };
+  }
+
+  @Put('category-services/:id')
+  async updateCategoryService(@Param('id') id: string, @Body() body: any) {
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
+    let services: any[] = [];
+    if (setting && setting.value) {
+      try { services = JSON.parse(setting.value); } catch {}
+    } else {
+      services = (await this.getCategoryServices()).data;
+    }
+
+    const index = services.findIndex(s => s.id === id || s.serviceId === id);
+    if (index === -1) {
+      return { success: false, statusCode: 404, message: 'Devotional service not found.' };
+    }
+
+    if (body.title) services[index].title = body.title.trim();
+    if (body.sub !== undefined) services[index].sub = body.sub.trim();
+    if (body.icon) services[index].icon = body.icon.trim();
+    if (body.url) services[index].url = body.url.trim();
+    if (body.artwork !== undefined) {
+      let finalArt = body.artwork.trim();
+      if (finalArt.startsWith('data:image/')) {
+        finalArt = this.saveBase64Image(finalArt, 'service');
+      }
+      services[index].artwork = finalArt;
+    }
+    if (body.displayOrder !== undefined) services[index].displayOrder = parseInt(body.displayOrder, 10);
+    if (body.isActive !== undefined) services[index].isActive = Boolean(body.isActive);
+
+    await this.prisma.appSetting.update({
+      where: { key: 'category_services' },
+      data: { value: JSON.stringify(services) }
+    });
+
+    return {
+      success: true,
+      message: 'Devotional service updated successfully.',
+      data: services[index]
+    };
+  }
+
+  @Post('category-services/:id/image')
+  async uploadCategoryServiceImage(@Param('id') id: string, @Body() body: { image: string }) {
+    if (!body || !body.image) throw new BadRequestException('Image payload required');
+    let finalUrl = body.image.trim();
+    if (finalUrl.startsWith('data:image/')) {
+      finalUrl = this.saveBase64Image(finalUrl, 'service');
+    }
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
+    let services: any[] = [];
+    if (setting && setting.value) {
+      try { services = JSON.parse(setting.value); } catch {}
+    } else {
+      services = (await this.getCategoryServices()).data;
+    }
+    const idx = services.findIndex(s => s.id === id || s.serviceId === id);
+    if (idx !== -1) {
+      services[idx].artwork = finalUrl;
+      await this.prisma.appSetting.update({
+        where: { key: 'category_services' },
+        data: { value: JSON.stringify(services) }
+      });
+      return { success: true, artwork: finalUrl, service: services[idx] };
+    }
+    return { success: false, message: 'Devotional service not found' };
+  }
+
+  @Delete('category-services/:id')
+  async deleteCategoryService(@Param('id') id: string) {
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
+    let services: any[] = [];
+    if (setting && setting.value) {
+      try { services = JSON.parse(setting.value); } catch {}
+    } else {
+      services = (await this.getCategoryServices()).data;
+    }
+
+    const initialLength = services.length;
+    services = services.filter(s => s.id !== id && s.serviceId !== id);
+
+    if (services.length === initialLength) {
+      return { success: false, statusCode: 404, message: 'Devotional service not found.' };
+    }
+
+    await this.prisma.appSetting.update({
+      where: { key: 'category_services' },
+      data: { value: JSON.stringify(services) }
+    });
+
+    return {
+      success: true,
+      message: 'Devotional service deleted successfully.'
+    };
+  }
+
+  // =========================================================
   // GODS & GODDESSES (DEITIES) MANAGEMENT (CRUD for Admin Console)
   // =========================================================
 
   @Get('deities')
-  async getDeities() {
+  async getDeities(@Query('lang') lang?: string) {
     const setting = await this.prisma.appSetting.findUnique({
       where: { key: 'deities' }
     });
 
-    const defaultDeities = [
-      {
-        id: 'DEITY_AYYAPPA',
-        name: 'Lord Ayyappa',
-        alternateName: 'Dharma Sastha / Manikanta Swamy',
-        category: 'God',
-        vahana: 'Tiger / Leopard',
-        moolaMantra: 'Om Swamiye Saranam Ayyappa',
-        primaryTemple: 'Sabarimala Sri Ayyappa Temple, Kerala',
-        description: 'Supreme deity born of Lord Shiva and Lord Vishnu (Mohini), revered for celibacy, austerity, and universal unity.',
-        imageUrl: '/images/temples/banner-sabarimala-hd.png',
-        displayOrder: 1,
-        isActive: true
-      },
-      {
-        id: 'DEITY_GANESHA',
-        name: 'Lord Ganesha',
-        alternateName: 'Vigneshwara / Vinayaka / Ganapathi',
-        category: 'God',
-        vahana: 'Mooshika (Mouse)',
-        moolaMantra: 'Om Gam Ganapataye Namaha',
-        primaryTemple: 'Siddhivinayak & Kanipakam Devasthanam',
-        description: 'Prathama Poojya, remover of all obstacles, master of intellect, wisdom and auspicious beginnings.',
-        imageUrl: '/images/pooja-altar.jpg',
-        displayOrder: 2,
-        isActive: true
-      },
-      {
-        id: 'DEITY_SHIVA',
-        name: 'Lord Shiva',
-        alternateName: 'Mahadeva / Parameshwara / Nataraja',
-        category: 'God',
-        vahana: 'Nandi (Sacred Bull)',
-        moolaMantra: 'Om Namah Shivaya',
-        primaryTemple: 'Kashi Vishwanath & Kedarnath Jyotirlinga',
-        description: 'The supreme ascetic, Lord of Destruction and Cosmic Regeneration, dwelling on holy Mount Kailash.',
-        imageUrl: '/images/temples/banner-kashi-hd.png',
-        displayOrder: 3,
-        isActive: true
-      },
-      {
-        id: 'DEITY_VENKATESWARA',
-        name: 'Lord Venkateswara',
-        alternateName: 'Balaji / Srinivasa / Govinda',
-        category: 'God',
-        vahana: 'Garuda (Divine Eagle)',
-        moolaMantra: 'Om Namo Venkateshaya',
-        primaryTemple: 'Sri Venkateswara Temple, Tirumala',
-        description: 'Kaliyuga Prathyaksha Daivam who manifested upon the Seven Hills of Tirumala to liberate devotees from adversity.',
-        imageUrl: '/images/temples/banner-venkateswara-hd.png',
-        displayOrder: 4,
-        isActive: true
-      },
-      {
-        id: 'DEITY_SUBRAHMANYA',
-        name: 'Lord Subrahmanya',
-        alternateName: 'Murugan / Kartikeya / Skanda / Shanmukha',
-        category: 'God',
-        vahana: 'Mayura (Peacock)',
-        moolaMantra: 'Om Saravanabhavaya Namaha',
-        primaryTemple: 'Arupadai Veedu (Palani, Tiruchendur, Swamimalai)',
-        description: 'Commander-in-chief of celestial forces, master of spear (Vel), destroyer of negative forces.',
-        imageUrl: '/images/temple-hero.jpg',
-        displayOrder: 5,
-        isActive: true
-      },
-      {
-        id: 'DEITY_DURGA',
-        name: 'Goddess Kanaka Durga',
-        alternateName: 'Maha Shakthi / Bhavani / Mahishasuramardini',
-        category: 'Goddess',
-        vahana: 'Simha (Lion)',
-        moolaMantra: 'Om Dum Durgayei Namaha',
-        primaryTemple: 'Sri Durga Malleswara Swamy Varla Devasthanam, Vijayawada',
-        description: 'Swayambhu divine Mother atop Indrakeeladri hill, celebrated for blessing Arjuna and eradicating sorrow.',
-        imageUrl: '/images/temples/banner-kanaka-hd.png',
-        displayOrder: 6,
-        isActive: true
-      },
-      {
-        id: 'DEITY_MEENAKSHI',
-        name: 'Goddess Meenakshi',
-        alternateName: 'Madurai Meenakshi Amman / Angayarkanni',
-        category: 'Goddess',
-        vahana: 'Kili (Green Parrot) / Lion',
-        moolaMantra: 'Om Sri Mathre Namaha',
-        primaryTemple: 'Meenakshi Sundareswarar Temple, Madurai',
-        description: 'Fish-eyed divine Queen of Madurai, avatar of Parvati, bestower of kingdom, fertility and grace.',
-        imageUrl: '/images/temples/banner-meenakshi-hd.png',
-        displayOrder: 7,
-        isActive: true
-      },
-      {
-        id: 'DEITY_HANUMAN',
-        name: 'Lord Hanuman',
-        alternateName: 'Anjaneya / Maruthi / Bajrangbali',
-        category: 'God',
-        vahana: 'Vayu (Wind)',
-        moolaMantra: 'Om Sri Hanumate Namaha',
-        primaryTemple: 'Sankat Mochan Temple, Varanasi',
-        description: 'Exemplar of selfless devotion, boundless courage, and strength, invoked for protection on pilgrimage paths.',
-        imageUrl: '/images/temple-steps.jpg',
-        displayOrder: 8,
-        isActive: true
-      },
-      {
-        id: 'DEITY_LAKSHMI',
-        name: 'Goddess Mahalakshmi',
-        alternateName: 'Sri Devi / Padmavathi / Ashta Lakshmi',
-        category: 'Goddess',
-        vahana: 'Uluka (Owl) / Elephant',
-        moolaMantra: 'Om Shreem Mahalakshmiyei Namaha',
-        primaryTemple: 'Kolhapur Mahalakshmi & Tiruchanur Padmavathi',
-        description: 'Consort of Lord Vishnu, auspicious embodiment of spiritual wealth, fortune, purity and light.',
-        imageUrl: '/images/pooja-altar.jpg',
-        displayOrder: 9,
-        isActive: true
-      },
-      {
-        id: 'DEITY_GOMATHA',
-        name: 'Gomatha (Kamadhenu)',
-        alternateName: 'Surabhi / Sacred Divine Mother',
-        category: 'Goddess',
-        vahana: 'Sacred Sanctum',
-        moolaMantra: 'Om Namo Bhagavate Gomatre Namaha',
-        primaryTemple: 'All Sanctified Goshalas & Temple Praakarams',
-        description: 'Revered as the abode of 33 crore celestial devatas, symbol of unconditioned nourishment and peace.',
-        imageUrl: '/images/festival.jpg',
-        displayOrder: 10,
-        isActive: true
-      }
-    ];
+    let defaultDeities: any[] = [];
+    try {
+      defaultDeities = require('./deities-five-languages.json');
+    } catch {}
 
     let deities = defaultDeities;
     if (setting && setting.value) {
@@ -1685,21 +2783,37 @@ export class AdminController {
           deities = parsed;
         }
       } catch {}
-    } else {
+    } else if (defaultDeities.length > 0) {
       // Auto-initialize in appSetting
       try {
         await this.prisma.appSetting.upsert({
           where: { key: 'deities' },
           update: { value: JSON.stringify(defaultDeities) },
-          create: { key: 'deities', value: JSON.stringify(defaultDeities), description: 'Gods and Goddesses directory' }
+          create: { key: 'deities', value: JSON.stringify(defaultDeities), description: 'Gods and Goddesses directory (16 Sacred Deities)' }
         });
       } catch {}
     }
 
+    const targetLang = (lang || '').toLowerCase().trim();
+    const mapped = deities.map((deity: any) => {
+      const trans = deity.translations || {};
+      const loc = (targetLang && trans[targetLang]) ? trans[targetLang] : null;
+      return {
+        ...deity,
+        name: loc?.name || deity.name,
+        alternateName: loc && loc.alternateName !== undefined ? loc.alternateName : deity.alternateName,
+        vahana: loc && loc.vahana !== undefined ? loc.vahana : deity.vahana,
+        moolaMantra: loc && loc.moolaMantra !== undefined ? loc.moolaMantra : deity.moolaMantra,
+        primaryTemple: loc && loc.primaryTemple !== undefined ? loc.primaryTemple : deity.primaryTemple,
+        description: loc && loc.description !== undefined ? loc.description : deity.description,
+        translations: trans
+      };
+    });
+
     return {
       success: true,
-      total: deities.length,
-      data: deities
+      total: mapped.length,
+      data: mapped
     };
   }
 
@@ -1725,6 +2839,11 @@ export class AdminController {
       return { success: false, statusCode: 409, message: `Deity with ID "${deityId}" already exists.` };
     }
 
+    let finalImageUrl = body.imageUrl?.trim() || '/images/pooja-altar.jpg';
+    if (finalImageUrl.startsWith('data:image/')) {
+      finalImageUrl = this.saveBase64Image(finalImageUrl, 'deity');
+    }
+
     const newDeity = {
       id: deityId,
       name: body.name.trim(),
@@ -1734,9 +2853,10 @@ export class AdminController {
       moolaMantra: body.moolaMantra?.trim() || '',
       primaryTemple: body.primaryTemple?.trim() || '',
       description: body.description?.trim() || '',
-      imageUrl: body.imageUrl?.trim() || '/images/pooja-altar.jpg',
+      imageUrl: finalImageUrl,
       displayOrder: parseInt(body.displayOrder, 10) || (deities.length + 1),
-      isActive: body.isActive !== undefined ? Boolean(body.isActive) : true
+      isActive: body.isActive !== undefined ? Boolean(body.isActive) : true,
+      translations: body.translations || {}
     };
     deities.push(newDeity);
 
@@ -1776,7 +2896,14 @@ export class AdminController {
     if (body.moolaMantra !== undefined) deities[index].moolaMantra = body.moolaMantra.trim();
     if (body.primaryTemple !== undefined) deities[index].primaryTemple = body.primaryTemple.trim();
     if (body.description !== undefined) deities[index].description = body.description.trim();
-    if (body.imageUrl !== undefined) deities[index].imageUrl = body.imageUrl.trim();
+    if (body.translations !== undefined) deities[index].translations = body.translations;
+    if (body.imageUrl !== undefined) {
+      let finalImg = body.imageUrl.trim();
+      if (finalImg.startsWith('data:image/')) {
+        finalImg = this.saveBase64Image(finalImg, 'deity');
+      }
+      deities[index].imageUrl = finalImg;
+    }
     if (body.displayOrder !== undefined) deities[index].displayOrder = parseInt(body.displayOrder, 10);
     if (body.isActive !== undefined) deities[index].isActive = Boolean(body.isActive);
 

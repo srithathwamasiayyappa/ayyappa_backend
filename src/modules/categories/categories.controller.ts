@@ -44,13 +44,35 @@ export class CategoriesController {
           };
         }
       }
+
+      // Check dynamic app_settings for category_services
+      const setting = await this.prisma.appSetting.findUnique({
+        where: { key: 'category_services' }
+      });
+      if (setting && setting.value) {
+        try {
+          const parsed = JSON.parse(setting.value);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            let filtered = parsed;
+            if (search && search.trim() !== '') {
+              const q = search.trim().toLowerCase();
+              filtered = parsed.filter((s: any) => s.title?.toLowerCase().includes(q) || s.sub?.toLowerCase().includes(q) || s.serviceId?.toLowerCase().includes(q));
+            }
+            return {
+              success: true,
+              data: filtered,
+              count: filtered.length
+            };
+          }
+        } catch {}
+      }
     } catch (dbErr) {
       // Graceful fallback if database is reconnecting
     }
 
     // Default static services fallback so API never returns 500
     const fallbackServices = [
-      { id: 'pooja', serviceId: 'pooja', title: 'Pooja Vidhanam', sub: 'Sacred Ritual Guide', icon: 'Flame', url: '/subcategories', displayOrder: 1 },
+      { id: 'pooja', serviceId: 'pooja', title: 'Pooja Vidhanam', sub: 'Step-by-step sacred rituals', icon: 'Flame', url: '/subcategories', displayOrder: 1 },
       { id: 'stotras', serviceId: 'stotras', title: 'Divine Stotras', sub: 'Sacred Hymns & Chants', icon: 'BookOpen', url: '/stotras', displayOrder: 2 },
       { id: 'slokas', serviceId: 'slokas', title: 'Daily Slokas', sub: 'Verses for Meditation', icon: 'Scroll', url: '/slokas', displayOrder: 3 },
       { id: 'songs', serviceId: 'songs', title: 'Bhajans & Songs', sub: 'Devotional Melodies', icon: 'Music', url: '/songs', displayOrder: 4 },
@@ -71,6 +93,24 @@ export class CategoriesController {
       success: true,
       data: filtered,
       count: filtered.length,
+    };
+  }
+
+  // 1b. Devotional Service By ID Endpoint
+  @Get('services/:id')
+  async getCategoryServiceById(@Param('id') id: string) {
+    const list = await this.getCategoryServices();
+    const service = list.data.find((s: any) => s.id === id || s.serviceId === id);
+    if (!service) {
+      return {
+        success: false,
+        statusCode: 404,
+        message: `Devotional service '${id}' not found.`
+      };
+    }
+    return {
+      success: true,
+      data: service
     };
   }
 
