@@ -383,7 +383,7 @@ export class DharmaKarthaService {
       // In-memory dev fallback strictly representing the authenticated user
       return {
         id: userId,
-        fullName: userId === 1 ? 'Vinod' : `Devotee #${userId}`,
+        fullName: 'Vinod Kumar',
         city: 'Hyderabad',
         state: 'Telangana',
         role: 'DHARMA_KARTHA',
