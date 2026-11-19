@@ -435,12 +435,14 @@ export class TemplesService implements OnModuleInit {
     await this.ensureTablesExist();
 
     const numericId = parseInt(idOrSlug, 10);
+    const isStrictNumeric = !isNaN(numericId) && String(numericId) === idOrSlug.trim();
     try {
       const rows: any = await this.prisma.$queryRawUnsafe('SELECT * FROM `temples`');
       if (Array.isArray(rows)) {
         const found = rows.find((r) => {
           if (r.slug === idOrSlug) return true;
-          if (!isNaN(numericId) && r.id === numericId) return true;
+          if (isStrictNumeric && r.id === numericId) return true;
+          if (r.name && r.name.toLowerCase() === idOrSlug.trim().toLowerCase()) return true;
           return false;
         });
         if (found) {
@@ -449,6 +451,36 @@ export class TemplesService implements OnModuleInit {
       }
     } catch (e) {
       console.warn('[TemplesService] getTempleById error:', e);
+    }
+
+    try {
+      const dkTemple: any = await (this.prisma as any).temple.findFirst({
+        where: {
+          OR: [
+            { slug: idOrSlug },
+            { name: idOrSlug },
+            ...(isStrictNumeric ? [{ id: numericId }] : []),
+          ],
+        },
+        include: {
+          timings: true,
+          festivals: true,
+          events: true,
+          gallery: true,
+        },
+      });
+
+      if (dkTemple) {
+        return this.transformTemple(
+          {
+            ...dkTemple,
+            timings_json: dkTemple.timings ? JSON.stringify(dkTemple.timings) : undefined,
+          },
+          lang
+        );
+      }
+    } catch (e) {
+      console.warn('[TemplesService] getTempleById fallback note:', e);
     }
 
     throw new NotFoundException(`Temple not found for identifier: ${idOrSlug}`);
