@@ -966,7 +966,20 @@ export class DharmaKarthaService {
       };
     }
 
-    if (!body.title || !body.timeWindow) {
+    const title = (body.title || '').trim();
+    let timeWindow = (body.timeWindow || '').trim();
+
+    if (!timeWindow && (body.startTime || body.endTime)) {
+      const start = (body.startTime || '').trim();
+      const end = (body.endTime || '').trim();
+      if (start && end) {
+        timeWindow = `${start} – ${end}`;
+      } else {
+        timeWindow = start || end;
+      }
+    }
+
+    if (!title || !timeWindow) {
       return {
         success: false,
         statusCode: 400,
@@ -974,15 +987,19 @@ export class DharmaKarthaService {
       };
     }
 
+    const description = (body.description || body.applicableDays || '').trim() || null;
+    const sortOrder = Number(body.sortOrder) || 0;
+    const isActive = body.isActive !== false;
+
     try {
       const timing = await (this.prisma as any).templeTiming.create({
         data: {
           templeId,
-          title: body.title.trim(),
-          timeWindow: body.timeWindow.trim(),
-          description: body.description?.trim() || null,
-          sortOrder: Number(body.sortOrder) || 0,
-          isActive: body.isActive !== false,
+          title,
+          timeWindow,
+          description,
+          sortOrder,
+          isActive,
         },
       });
       return { success: true, message: 'Darshan timing added successfully.', timing };
@@ -990,11 +1007,11 @@ export class DharmaKarthaService {
       const newTiming = {
         id: this.devTimings.length + 1,
         templeId,
-        title: body.title.trim(),
-        timeWindow: body.timeWindow.trim(),
-        description: body.description?.trim() || '',
-        sortOrder: Number(body.sortOrder) || this.devTimings.length + 1,
-        isActive: body.isActive !== false,
+        title,
+        timeWindow,
+        description: description || '',
+        sortOrder: sortOrder || this.devTimings.length + 1,
+        isActive,
       };
       this.devTimings.push(newTiming);
       return { success: true, message: 'Darshan timing added successfully.', timing: newTiming };
@@ -1012,13 +1029,28 @@ export class DharmaKarthaService {
       };
     }
 
+    let timeWindow = body.timeWindow !== undefined ? body.timeWindow.trim() : undefined;
+    if (timeWindow === undefined && (body.startTime !== undefined || body.endTime !== undefined)) {
+      const start = (body.startTime || '').trim();
+      const end = (body.endTime || '').trim();
+      if (start && end) {
+        timeWindow = `${start} – ${end}`;
+      } else {
+        timeWindow = start || end;
+      }
+    }
+
+    const description = body.description !== undefined
+      ? body.description.trim()
+      : (body.applicableDays !== undefined ? body.applicableDays.trim() : undefined);
+
     try {
       const timing = await (this.prisma as any).templeTiming.update({
         where: { id: timingId },
         data: {
           title: body.title !== undefined ? body.title.trim() : undefined,
-          timeWindow: body.timeWindow !== undefined ? body.timeWindow.trim() : undefined,
-          description: body.description !== undefined ? body.description.trim() : undefined,
+          timeWindow,
+          description,
           sortOrder: body.sortOrder !== undefined ? Number(body.sortOrder) : undefined,
           isActive: body.isActive !== undefined ? Boolean(body.isActive) : undefined,
         },
@@ -1032,6 +1064,7 @@ export class DharmaKarthaService {
       this.devTimings[idx] = {
         ...this.devTimings[idx],
         ...body,
+        timeWindow: timeWindow || this.devTimings[idx].timeWindow,
       };
       return { success: true, message: 'Darshan timing updated successfully.', timing: this.devTimings[idx] };
     }
@@ -1553,7 +1586,8 @@ export class DharmaKarthaService {
       return { success: false, statusCode: 403, message: 'Forbidden: You do not own this temple' };
     }
 
-    if (!body.title || !body.mediaUrl) {
+    const mediaUrl = (body.mediaUrl || body.url || '').trim();
+    if (!body.title || !mediaUrl) {
       return { success: false, statusCode: 400, message: 'Title and media URL are required' };
     }
 
@@ -1563,7 +1597,7 @@ export class DharmaKarthaService {
           templeId,
           title: body.title.trim(),
           caption: body.caption?.trim() || '',
-          mediaUrl: body.mediaUrl.trim(),
+          mediaUrl,
           type: body.type || 'Photo',
           sortOrder: body.sortOrder || 0,
           isApproved: true,
