@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, Headers, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Param, Body, Query, Headers, UnauthorizedException } from '@nestjs/common';
 import { DharmaKarthaService } from './dharma-kartha.service';
 
 @Controller('dharma-kartha')
@@ -363,6 +363,36 @@ export class DharmaKarthaController {
     const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
     const adminEmail = token ? 'admin@saranamayyappa.org' : 'superadmin@saranamayyappa.in';
     return this.dkService.reviewClaimAsAdmin(adminEmail, body.claimRequestId, body.approve, body.notes);
+  }
+
+  // GET /api/v1/dharma-kartha/admin/temples - Super Admin Temple Review List
+  @Get('admin/temples')
+  async getAdminTemples(@Query() query: any) {
+    return this.dkService.getAllTemplesForAdmin(query);
+  }
+
+  // PUT /api/v1/dharma-kartha/admin/temples/:id/review - Approve or Reject Temple
+  @Put('admin/temples/:id/review')
+  async reviewTemplePut(
+    @Headers('authorization') authHeader: string,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+    const adminEmail = token ? 'admin@saranamayyappa.org' : 'superadmin@saranamayyappa.in';
+    return this.dkService.reviewTempleAsAdmin(parseInt(id, 10), body, adminEmail);
+  }
+
+  // POST /api/v1/dharma-kartha/admin/temples/:id/review - Approve or Reject Temple (POST alias)
+  @Post('admin/temples/:id/review')
+  async reviewTemplePost(
+    @Headers('authorization') authHeader: string,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null;
+    const adminEmail = token ? 'admin@saranamayyappa.org' : 'superadmin@saranamayyappa.in';
+    return this.dkService.reviewTempleAsAdmin(parseInt(id, 10), body, adminEmail);
   }
 
   // 4. GET /api/v1/dharma-kartha/temples/:id (Fetch Details of Authorized Temple)

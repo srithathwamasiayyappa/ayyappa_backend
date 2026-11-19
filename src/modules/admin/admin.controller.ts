@@ -16,6 +16,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { TranslationService } from './translation.service';
+import { DharmaKarthaService } from '../dharma-kartha/dharma-kartha.service';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -42,7 +43,34 @@ export class AdminController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly translationService: TranslationService,
+    private readonly dkService: DharmaKarthaService,
   ) {}
+
+  // Dharma Kartha Temple Management Endpoints
+  @Get('dharma-kartha/temples')
+  async getDharmaKarthaTemples(@Query() query: any) {
+    return this.dkService.getAllTemplesForAdmin(query);
+  }
+
+  @Put('dharma-kartha/temples/:id/review')
+  async reviewDharmaKarthaTemple(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Req() req: Request,
+  ) {
+    const adminEmail = (req as any).user?.email || 'superadmin@saranamayyappa.in';
+    return this.dkService.reviewTempleAsAdmin(parseInt(id, 10), body, adminEmail);
+  }
+
+  @Post('dharma-kartha/temples/:id/review')
+  async reviewDharmaKarthaTemplePost(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Req() req: Request,
+  ) {
+    const adminEmail = (req as any).user?.email || 'superadmin@saranamayyappa.in';
+    return this.dkService.reviewTempleAsAdmin(parseInt(id, 10), body, adminEmail);
+  }
 
   // 1. Admin Authentication & Session Security (Bcrypt Salt 12 + Sliding-Window Rate Limiter)
   @Post('auth/login')

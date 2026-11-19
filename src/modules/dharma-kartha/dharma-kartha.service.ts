@@ -2050,4 +2050,200 @@ export class DharmaKarthaService {
       };
     }
   }
+
+  // GET /api/v1/dharma-kartha/admin/temples - Admin view of all Dharma Kartha temples
+  async getAllTemplesForAdmin(query?: { status?: string; search?: string }) {
+    const statusFilter = (query?.status || 'ALL').toUpperCase();
+    const search = (query?.search || '').trim().toLowerCase();
+
+    try {
+      const where: any = {};
+      if (statusFilter !== 'ALL') {
+        where.status = statusFilter;
+      }
+      if (search) {
+        where.OR = [
+          { name: { contains: search } },
+          { city: { contains: search } },
+          { primaryDeity: { contains: search } },
+        ];
+      }
+
+      const dbTemples = await (this.prisma as any).temple.findMany({
+        where,
+        include: {
+          memberships: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  phoneNumber: true,
+                  preferredLang: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { id: 'desc' },
+      });
+
+      const items = dbTemples.map((t: any) => {
+        const ownerMembership = t.memberships?.find((m: any) => m.role === 'OWNER') || t.memberships?.[0];
+        return {
+          id: t.id,
+          name: t.name,
+          alternateName: t.alternateName,
+          slug: t.slug,
+          primaryDeity: t.primaryDeity,
+          shortDescription: t.shortDescription,
+          about: t.about,
+          history: t.history,
+          speciality: t.speciality,
+          country: t.country,
+          state: t.state,
+          district: t.district,
+          city: t.city,
+          address: t.address,
+          pincode: t.pincode,
+          officePhone: t.officePhone,
+          officialEmail: t.officialEmail,
+          officialWebsite: t.officialWebsite,
+          heroImageUrl: t.heroImageUrl,
+          status: t.status,
+          isVerified: t.isVerified,
+          createdAt: t.createdAt,
+          updatedAt: t.updatedAt,
+          owner: ownerMembership ? {
+            id: ownerMembership.user?.id || ownerMembership.userId,
+            fullName: ownerMembership.user?.fullName || 'Dharma Kartha',
+            phoneNumber: ownerMembership.user?.phoneNumber || null,
+            membershipRole: ownerMembership.role,
+            membershipStatus: ownerMembership.status,
+          } : null,
+        };
+      });
+
+      return {
+        success: true,
+        total: items.length,
+        pendingCount: items.filter((x: any) => x.status === 'PENDING_APPROVAL').length,
+        publishedCount: items.filter((x: any) => x.status === 'PUBLISHED').length,
+        rejectedCount: items.filter((x: any) => x.status === 'REJECTED').length,
+        temples: items,
+      };
+    } catch (err: any) {
+      // In-memory fallback
+      let list = [...this.devTemples];
+      if (statusFilter !== 'ALL') {
+        list = list.filter((t) => t.status === statusFilter);
+      }
+      if (search) {
+        list = list.filter((t) =>
+          (t.name && t.name.toLowerCase().includes(search)) ||
+          (t.city && t.city.toLowerCase().includes(search)) ||
+          (t.primaryDeity && t.primaryDeity.toLowerCase().includes(search)),
+        );
+      }
+      const items = list.map((t) => {
+        const mem = this.devMemberships.find((m) => m.templeId === t.id);
+        return {
+          ...t,
+          owner: mem ? {
+            id: mem.userId,
+            fullName: 'Dharma Kartha Devotee',
+            phoneNumber: '+91 9876543210',
+            membershipRole: mem.role,
+            membershipStatus: mem.status,
+          } : null,
+        };
+      });
+
+      return {
+        success: true,
+        total: items.length,
+        pendingCount: this.devTemples.filter((x: any) => x.status === 'PENDING_APPROVAL').length,
+        publishedCount: this.devTemples.filter((x: any) => x.status === 'PUBLISHED').length,
+        rejectedCount: this.devTemples.filter((x: any) => x.status === 'REJECTED').length,
+        temples: items,
+      };
+    }
+  }
+
+  // PUT /api/v1/dharma-kartha/admin/temples/:id/review - Approve or Reject Temple
+  async reviewTempleAsAdmin(
+    templeId: number,
+    body: { status?: string; isVerified?: boolean; approve?: boolean; rejectionReason?: string },
+    adminEmail: string = 'superadmin@saranamayyappa.in',
+  ) {
+    const isApprove = body.approve === true || body.status === 'PUBLISHED';
+    const newStatus = isApprove ? 'PUBLISHED' : 'REJECTED';
+    const isVerified = isApprove;
+
+    try {
+      const updateData: any = {
+        status: newStatus,
+        isVerified,
+      };
+      if (!isApprove && body.rejectionReason) {
+        updateData.shortDescription = `[Rejection Reason: ${body.rejectionReason}]`;
+      }
+
+      const updated = await (this.prisma as any).temple.update({
+        where: { id: templeId },
+        data: updateData,
+      });
+
+      // Update membership status
+      await (this.prisma as any).templeMembership.updateMany({
+        where: { templeId },
+        data: {
+          status: isApprove ? 'APPROVED' : 'REJECTED',
+          approvedBy: adminEmail,
+          approvedAt: new Date(),
+        },
+      }).catch(() => {});
+
+      // Also update in dev cache if present
+      const devIndex = this.devTemples.findIndex((t) => t.id === templeId);
+      if (devIndex !== -1) {
+        this.devTemples[devIndex].status = newStatus;
+        this.devTemples[devIndex].isVerified = isVerified;
+        if (!isApprove && body.rejectionReason) {
+          this.devTemples[devIndex].shortDescription = `[Rejection Reason: ${body.rejectionReason}]`;
+        }
+      }
+
+      return {
+        success: true,
+        message: `Temple "${updated.name}" has been ${isApprove ? 'APPROVED and PUBLISHED' : 'REJECTED'} successfully.`,
+        temple: updated,
+      };
+    } catch (err: any) {
+      // Dev in-memory update
+      const devIndex = this.devTemples.findIndex((t) => t.id === templeId);
+      if (devIndex !== -1) {
+        this.devTemples[devIndex].status = newStatus;
+        this.devTemples[devIndex].isVerified = isVerified;
+        if (!isApprove && body.rejectionReason) {
+          this.devTemples[devIndex].shortDescription = `[Rejection Reason: ${body.rejectionReason}]`;
+        }
+        const devMem = this.devMemberships.find((m) => m.templeId === templeId);
+        if (devMem) {
+          devMem.status = isApprove ? 'APPROVED' : 'REJECTED';
+        }
+        return {
+          success: true,
+          message: `Temple "${this.devTemples[devIndex].name}" status updated to ${newStatus}.`,
+          temple: this.devTemples[devIndex],
+        };
+      }
+
+      return {
+        success: false,
+        statusCode: 404,
+        message: `Temple #${templeId} not found in database.`,
+      };
+    }
+  }
 }
