@@ -396,56 +396,72 @@ export class DharmaKarthaService {
   // GET /api/v1/dharma-kartha/dashboard statistics
   async getDashboardStats(userId: number) {
     try {
-      const managedTemplesCount = await (this.prisma as any).templeMembership.count({
-        where: { userId, status: 'APPROVED' },
+      const allMemberships = await (this.prisma as any).templeMembership.findMany({
+        where: { userId },
+        include: { temple: true },
       });
+
+      const managedTemplesCount = allMemberships.length;
+
+      // Count temples with PENDING_APPROVAL / PENDING status or membership PENDING
+      const pendingTemplesCount = allMemberships.filter(
+        (m: any) =>
+          m.temple?.status === 'PENDING_APPROVAL' ||
+          m.temple?.status === 'PENDING' ||
+          m.status === 'PENDING',
+      ).length;
 
       const pendingUpdatesCount = await (this.prisma as any).templeUpdateRequest.count({
         where: { requestedById: userId, status: 'PENDING' },
-      });
+      }).catch(() => 0);
 
-      const memberships = await (this.prisma as any).templeMembership.findMany({
-        where: { userId, status: 'APPROVED' },
-        select: { templeId: true },
-      });
+      const totalPendingCount = pendingTemplesCount + pendingUpdatesCount;
 
-      const templeIds = memberships.map((m: any) => m.templeId);
+      const templeIds = allMemberships.map((m: any) => m.templeId);
 
       const activeFestivalsCount = templeIds.length > 0
         ? await (this.prisma as any).templeFestival.count({
-            where: { templeId: { in: templeIds }, status: 'PUBLISHED' },
-          })
+            where: { templeId: { in: templeIds } },
+          }).catch(() => 0)
         : 0;
 
       return {
         success: true,
         data: {
           managedTemples: managedTemplesCount,
-          pendingUpdates: pendingUpdatesCount,
+          pendingUpdates: totalPendingCount,
           activeFestivals: activeFestivalsCount,
         },
       };
     } catch {
       // Stateful in-memory development provider:
-      // Counts only active, approved memberships for THIS exact user id
-      const userMemberships = this.devMemberships.filter(
-        (m) => m.userId === userId && m.status === 'APPROVED',
-      );
+      const userMemberships = this.devMemberships.filter((m) => m.userId === userId);
       const templeIds = userMemberships.map((m) => m.templeId);
+
+      const pendingTemplesCount = userMemberships.filter((m) => {
+        const t = this.devTemples.find((temp) => temp.id === m.templeId);
+        return (
+          t?.status === 'PENDING_APPROVAL' ||
+          t?.status === 'PENDING' ||
+          m.status === 'PENDING'
+        );
+      }).length;
 
       const pendingUpdatesCount = this.devUpdateRequests.filter(
         (r) => r.requestedById === userId && r.status === 'PENDING',
       ).length;
 
+      const totalPendingCount = pendingTemplesCount + pendingUpdatesCount;
+
       const activeFestivalsCount = this.devFestivals.filter(
-        (f) => templeIds.includes(f.templeId) && f.status === 'PUBLISHED',
+        (f) => templeIds.includes(f.templeId),
       ).length;
 
       return {
         success: true,
         data: {
           managedTemples: userMemberships.length,
-          pendingUpdates: pendingUpdatesCount,
+          pendingUpdates: totalPendingCount,
           activeFestivals: activeFestivalsCount,
         },
       };
