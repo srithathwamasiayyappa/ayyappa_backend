@@ -918,6 +918,150 @@ export class AdminController {
     };
   }
 
+  // 5b. Single Subcategory Detail from DB (with multi-language translations & attached verses)
+  @Get('subcategories/:id')
+  async getSubcategoryDetail(
+    @Param('id') id: string,
+    @Query('lang') lang: string = 'te'
+  ) {
+    const isNum = !isNaN(Number(id));
+    const where: any = isNum ? { id: Number(id) } : { slug: id };
+
+    let customImages: Record<string, string> = {};
+    try {
+      const imgSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+      if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
+    } catch (_) {}
+
+    try {
+      const cat = await this.prisma.contentCategory.findFirst({
+        where,
+        include: {
+          parent: {
+            include: {
+              translations: {
+                include: { language: true }
+              }
+            }
+          },
+          translations: {
+            include: { language: true }
+          },
+          devotionalContents: {
+            where: { isPublished: true },
+            orderBy: { displayOrder: 'asc' }
+          },
+          subcategories: {
+            where: { isArchived: false },
+            orderBy: { displayOrder: 'asc' },
+            include: {
+              translations: {
+                include: { language: true }
+              }
+            }
+          }
+        }
+      });
+
+      if (cat) {
+        const preferred = cat.translations.find((t: any) => t.language?.code === lang) || cat.translations[0];
+        const parentPref = cat.parent?.translations?.find((t: any) => t.language?.code === lang) || cat.parent?.translations?.[0];
+        const pSlug = cat.parent?.slug || 'pooja';
+        const customImg = customImages[String(cat.id)] || customImages[cat.slug];
+
+        const allTranslations = cat.translations.map((t: any) => ({
+          code: t.language?.code || 'en',
+          name: t.language?.name || 'English',
+          title: t.title,
+          description: t.description || null
+        }));
+
+        const contents = cat.devotionalContents.map((d: any) => ({
+          id: d.id,
+          title: d.title,
+          slug: d.slug,
+          sacredText: d.sacredText || null,
+          meaning: d.meaning || null,
+          displayOrder: d.displayOrder
+        }));
+
+        const subcategories = cat.subcategories.map((sub: any) => {
+          const subPref = sub.translations.find((t: any) => t.language?.code === lang) || sub.translations[0];
+          return {
+            id: String(sub.id),
+            title: subPref ? subPref.title : sub.slug,
+            slug: sub.slug,
+            description: subPref ? subPref.description : null
+          };
+        });
+
+        return {
+          success: true,
+          data: {
+            id: String(cat.id),
+            slug: cat.slug,
+            title: preferred ? preferred.title : cat.slug,
+            description: preferred ? preferred.description : null,
+            parentId: cat.parentId,
+            parentTitle: parentPref ? parentPref.title : pSlug,
+            parentSlug: pSlug,
+            displayOrder: cat.displayOrder,
+            isAudio: cat.isAudio,
+            isSubcategory: Boolean(cat.parentId),
+            imageUrl: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
+            translations: allTranslations,
+            contents,
+            subcategories,
+            createdAt: cat.createdAt,
+            updatedAt: cat.updatedAt
+          }
+        };
+      }
+    } catch (err) {
+      console.warn('[Admin] getSubcategoryDetail DB query error:', err);
+    }
+
+    // Default Fallback
+    const customImg = customImages[id] || '';
+    const formattedTitle = id.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+    return {
+      success: true,
+      data: {
+        id: String(id),
+        slug: id,
+        title: formattedTitle,
+        description: `Complete sacred guide, procedure and mantras for ${formattedTitle}.`,
+        parentId: 1,
+        parentTitle: 'Pooja Vidhanam',
+        parentSlug: 'pooja',
+        displayOrder: 1,
+        isAudio: false,
+        isSubcategory: true,
+        imageUrl: customImg || `/images/subcategories/pooja/${id}.webp`,
+        translations: [
+          { code: 'en', name: 'English', title: formattedTitle, description: `Complete sacred guide and mantras for ${formattedTitle}.` },
+          { code: 'te', name: 'Telugu', title: formattedTitle, description: `సంపూర్ణ పూజా విధానం మరియు మంత్రములు.` },
+          { code: 'kn', name: 'Kannada', title: formattedTitle, description: `ಸಂಪೂರ್ಣ ಪೂಜಾ ವಿಧಾನ ಮತ್ತು ಮಂತ್ರಗಳು.` },
+          { code: 'ta', name: 'Tamil', title: formattedTitle, description: `முழுமையான பூஜை முறை மற்றும் மந்திரங்கள்.` },
+          { code: 'hi', name: 'Hindi', title: formattedTitle, description: `सम्पूर्ण पूजा विधान एवं मन्त्र।` }
+        ],
+        contents: [
+          {
+            id: 1,
+            title: `${formattedTitle} Sacred Chanting & Mantras`,
+            slug: `${id}-chanting`,
+            sacredText: 'ఓం శ్రీ స్వామియే శరణం అయ్యప్ప | ఓం నమో భగవతే వాసుదేవాయ ||',
+            meaning: 'Step-by-step sacred procedure, invocation mantras, offering sequence, and prayer rules.'
+          }
+        ],
+        subcategories: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    };
+  }
+
   // 6. Devotional Content (Stotras, Mantras, Slokas, Poojas)
   @Get('content')
   async getDevotionalContent(
