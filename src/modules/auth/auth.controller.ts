@@ -358,6 +358,24 @@ export class AuthController {
       },
     });
 
+    // Write audit log for administrator review in admin panel
+    try {
+      await this.prisma.adminAuditLog.create({
+        data: {
+          action: 'USER_DELETION_REQUESTED',
+          targetType: 'APP_USER',
+          targetId: String(user.id),
+          detailsJson: JSON.stringify({
+            userId: user.id,
+            phone: cleanPhone,
+            fullName: user.fullName,
+            reason: reason ? reason.trim().slice(0, 500) : 'Requested by devotee with verified OTP',
+            requestedAt: new Date().toISOString(),
+          }),
+        },
+      });
+    } catch {}
+
     return {
       success: true,
       message: 'Your devotee account has been permanently deleted.',

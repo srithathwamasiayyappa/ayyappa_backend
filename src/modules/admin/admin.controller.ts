@@ -828,10 +828,20 @@ export class AdminController {
         const parentPref = cat.parent?.translations?.find((t: any) => t.languageId === preferred?.languageId) || cat.parent?.translations?.[0];
         const pSlug = cat.parent?.slug || 'pooja';
         const customImg = customImages[String(cat.id)] || customImages[cat.slug];
+
+        // Format clean title if not in DB translations
+        const titleFormatted = cat.slug
+          .replace(/-/g, ' ')
+          .replace(/\b\w/g, (l: string) => l.toUpperCase());
+
+        const finalTitle = (preferred?.title && preferred.title !== cat.slug)
+          ? preferred.title
+          : titleFormatted;
+
         return {
           id: String(cat.id),
           slug: cat.slug,
-          title: preferred ? preferred.title : cat.slug,
+          title: finalTitle,
           description: preferred?.description || '',
           parentId: cat.parentId,
           parentSlug: pSlug,
@@ -2016,13 +2026,33 @@ export class AdminController {
       const requests = await this.prisma.appUser.findMany({
         where: {
           deletionRequested: true,
-          isDeleted: false,
         },
         orderBy: { deletionRequestedAt: 'desc' },
       });
       return { success: true, count: requests.length, data: requests };
     } catch {
       return { success: true, count: 0, data: [] };
+    }
+  }
+
+  // 11b-2. Specific Endpoint: Dismiss/Cancel User Deletion Request
+  @Post('users/:id/dismiss-deletion-request')
+  async dismissDeletionRequest(@Param('id') id: string) {
+    const userId = Number(id);
+    if (!userId) {
+      throw new BadRequestException('Invalid user ID');
+    }
+    try {
+      await this.prisma.appUser.update({
+        where: { id: userId },
+        data: {
+          deletionRequested: false,
+          deletionReason: null,
+        },
+      });
+      return { success: true, message: 'Devotee deletion request dismissed successfully.' };
+    } catch (e: any) {
+      throw new BadRequestException(e?.message || 'Failed to dismiss deletion request');
     }
   }
 

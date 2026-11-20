@@ -256,6 +256,280 @@ export class CategoriesController {
     return seedCategories;
   }
 
+  // 1b. Stotras Public API List (filtered by published, parent stotras/slogans, Telugu first)
+  @Get('stotras')
+  async getStotras(
+    @Query('lang') lang = 'te',
+    @Query('search') search?: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '50',
+    @Query('deity') deity?: string
+  ) {
+    const targetLang = (lang || 'te').toLowerCase().trim();
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+    const skip = (pageNum - 1) * take;
+
+    try {
+      // Find parent category for stotras (id 4 or slug slogans-of-sri-ayyappa-swami / stotras)
+      const parentCat = await this.prisma.contentCategory.findFirst({
+        where: {
+          OR: [
+            { id: 4 },
+            { slug: 'slogans-of-sri-ayyappa-swami' },
+            { slug: 'stotras' }
+          ]
+        }
+      });
+
+      const parentId = parentCat ? parentCat.id : 4;
+
+      const where: any = {
+        parentId: parentId,
+        isArchived: false,
+      };
+
+      if (search && search.trim() !== '') {
+        const q = search.trim();
+        where.AND = [
+          {
+            OR: [
+              { slug: { contains: q } },
+              { translations: { some: { title: { contains: q } } } }
+            ]
+          }
+        ];
+      }
+
+      const [totalRecords, items] = await Promise.all([
+        this.prisma.contentCategory.count({ where }),
+        this.prisma.contentCategory.findMany({
+          where,
+          skip,
+          take,
+          orderBy: { displayOrder: 'asc' },
+          include: {
+            translations: { include: { language: true } },
+            devotionalContents: {
+              where: { isPublished: true },
+              orderBy: { displayOrder: 'asc' }
+            }
+          }
+        })
+      ]);
+
+      const data = items.map((cat, idx) => {
+        const preferred = cat.translations.find((t: any) => t.language?.code === targetLang) || cat.translations.find((t: any) => t.language?.code === 'te') || cat.translations[0];
+        const titleFormatted = cat.slug.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+        const devContent = cat.devotionalContents[0];
+        const verseCount = devContent && devContent.sacredText ? devContent.sacredText.split(/\n\s*\n/).length : 0;
+
+        return {
+          id: String(cat.id),
+          slug: cat.slug,
+          title: preferred?.title || titleFormatted,
+          description: preferred?.description || '',
+          deityName: preferred?.title?.includes('శివ') ? 'శివుడు' : preferred?.title?.includes('వేంకటేశ') ? 'శ్రీ వేంకటేశ్వర స్వామి' : preferred?.title?.includes('వాసవీ') ? 'వాసవీ కన్యకా పరమేశ్వరి' : 'సర్వ దేవతలు',
+          verseCount: verseCount || (devContent ? 5 : 0),
+          isPublished: devContent ? devContent.isPublished : true,
+          displayOrder: cat.displayOrder,
+          imageUrl: `/images/subcategories/stotras/${cat.slug}.webp`,
+          badge: 'Stotra',
+          updatedAt: cat.updatedAt
+        };
+      });
+
+      return {
+        success: true,
+        data,
+        meta: {
+          page: pageNum,
+          limit: take,
+          totalRecords,
+          totalPages: Math.ceil(totalRecords / take)
+        }
+      };
+    } catch (err) {
+      console.warn('[Categories] getStotras error:', err);
+      return { success: false, data: [], meta: { page: 1, limit: take, totalRecords: 0, totalPages: 0 } };
+    }
+  }
+
+  // 1b-detail. Stotra Detail API by slug or ID
+  @Get('stotras/:slugOrId')
+  async getStotraDetail(
+    @Param('slugOrId') slugOrId: string,
+    @Query('lang') lang = 'te'
+  ) {
+    const targetLang = (lang || 'te').toLowerCase().trim();
+    const isNum = !isNaN(Number(slugOrId));
+    const whereClause: any = isNum ? { id: Number(slugOrId) } : { slug: slugOrId };
+
+    try {
+      const category = await this.prisma.contentCategory.findFirst({
+        where: whereClause,
+        include: {
+          translations: { include: { language: true } },
+          devotionalContents: {
+            where: { isPublished: true },
+            orderBy: { displayOrder: 'asc' }
+          }
+        }
+      });
+
+      if (category) {
+        const preferred = category.translations.find((t: any) => t.language?.code === targetLang) || category.translations.find((t: any) => t.language?.code === 'te') || category.translations[0];
+        const devContent = category.devotionalContents[0];
+
+        return {
+          success: true,
+          data: {
+            id: String(category.id),
+            slug: category.slug,
+            title: preferred?.title || category.slug,
+            introduction: preferred?.description || '',
+            description: preferred?.description || '',
+            sacredText: devContent?.sacredText || '',
+            meaning: devContent?.meaning || '',
+            displayOrder: category.displayOrder,
+            isPublished: devContent?.isPublished ?? true,
+            imageUrl: `/images/subcategories/stotras/${category.slug}.webp`
+          }
+        };
+      }
+    } catch (err) {
+      console.warn('[Categories] getStotraDetail error:', err);
+    }
+
+    return { success: false, message: 'Stotra not found' };
+  }
+
+  // 1c. Devotional Subcategories Endpoint (Direct from MySQL with parent filtering)
+  @Get('subcategories')
+  async getSubcategories(
+    @Query('parent') parent?: string,
+    @Query('parentId') parentId?: string,
+    @Query('lang') lang = 'en',
+    @Query('search') search?: string
+  ) {
+    const parentKey = parent || parentId;
+    const targetLang = (lang || 'en').toLowerCase().trim();
+
+    try {
+      let targetParentCondition: any = { not: null };
+
+      if (parentKey && parentKey !== 'all') {
+        const parsed = parseInt(parentKey, 10);
+        if (!isNaN(parsed) && parsed > 0) {
+          targetParentCondition = parsed;
+        } else {
+          const orClauses: any[] = [
+            { slug: parentKey },
+            { slug: parentKey.toLowerCase() },
+            { translations: { some: { title: { contains: parentKey } } } }
+          ];
+          const lower = parentKey.toLowerCase();
+          if (lower === 'stotras' || lower === 'stotra' || lower === 'stotramulu') {
+            orClauses.push({ id: 4 });
+            orClauses.push({ slug: 'slogans-of-sri-ayyappa-swami' });
+          }
+          if (lower === 'slokas' || lower === 'sloka') {
+            orClauses.push({ id: 115 });
+            orClauses.push({ slug: 'slokas' });
+          }
+          if (lower === 'pooja' || lower === 'poojas') {
+            orClauses.push({ id: 17 });
+            orClauses.push({ slug: 'poojalu-vrathaalu' });
+          }
+
+          const parentMatch = await this.prisma.contentCategory.findFirst({
+            where: { OR: orClauses }
+          });
+          if (parentMatch) {
+            targetParentCondition = parentMatch.id;
+          }
+        }
+      }
+
+      const where: any = {
+        parentId: targetParentCondition,
+        isArchived: false,
+      };
+
+      if (search && search.trim() !== '') {
+        const q = search.trim();
+        where.AND = [
+          {
+            OR: [
+              { slug: { contains: q } },
+              { translations: { some: { title: { contains: q } } } }
+            ]
+          }
+        ];
+      }
+
+      const items = await this.prisma.contentCategory.findMany({
+        where,
+        orderBy: { displayOrder: 'asc' },
+        include: {
+          parent: { include: { translations: { include: { language: true } } } },
+          translations: { include: { language: true } }
+        }
+      });
+
+      if (items && items.length > 0) {
+        let customImages: Record<string, string> = {};
+        try {
+          const imgSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+          if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
+        } catch (_) {}
+
+        return {
+          success: true,
+          data: items.map(cat => {
+            const preferred = cat.translations.find((t: any) => t.language?.code === targetLang) || cat.translations[0];
+            const parentPref = cat.parent?.translations?.find((t: any) => t.language?.code === targetLang) || cat.parent?.translations?.[0];
+            const pSlug = cat.parent?.slug || 'slokas';
+            const customImg = customImages[String(cat.id)] || customImages[cat.slug];
+
+            const titleFormatted = cat.slug.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+            const finalTitle = (preferred?.title && preferred.title !== cat.slug) ? preferred.title : titleFormatted;
+
+            return {
+              id: String(cat.id),
+              slug: cat.slug,
+              title: finalTitle,
+              desc: preferred?.description || '',
+              description: preferred?.description || '',
+              parentId: cat.parentId,
+              parentSlug: pSlug,
+              parentTitle: parentPref ? parentPref.title : pSlug,
+              displayOrder: cat.displayOrder,
+              isAudio: cat.isAudio,
+              imageUrl: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
+              image: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
+              duration: '10 minutes',
+              badge: 'Daily',
+              badgeClass: 'badge-daily',
+              deityId: 'all',
+              deityName: '',
+              type: cat.isAudio ? 'Audio / Bhajan' : 'Vidhanam / Sloka'
+            };
+          }),
+          count: items.length
+        };
+      }
+    } catch (err) {
+      console.warn('[Categories] getSubcategories error:', err);
+    }
+
+    return {
+      success: true,
+      data: [],
+      count: 0
+    };
+  }
+
   @Get(':id')
   async getCategoryDetail(@Param('id') id: string, @Query('lang') lang = 'en') {
     const targetLang = (lang || 'en').toLowerCase().trim();
