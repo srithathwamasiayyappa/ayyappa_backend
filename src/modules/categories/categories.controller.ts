@@ -892,6 +892,27 @@ export class CategoriesController {
           } catch (_) {}
         }
 
+        if (children.length === 0 && (rawSlug.includes('subramanya') || rawSlug.includes('subrahmanya') || rawSlug.includes('murugan') || catId === 7)) {
+          try {
+            const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
+            if (fs.existsSync(auditPath)) {
+              const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
+              const auditChildren = audit.categories?.filter((c: any) => c.parentId === 7);
+              if (auditChildren && auditChildren.length > 0) {
+                children = auditChildren.map((ch: any) => {
+                  const chTrans = ch.translations?.find((t: any) => t.languageId === auditLangId) || ch.translations?.[0];
+                  return {
+                    id: String(ch.id),
+                    slug: ch.slug,
+                    title: chTrans?.title || ch.slug,
+                    imageUrl: '/images/deities/card_murugan.jpg'
+                  };
+                });
+              }
+            }
+          } catch (_) {}
+        }
+
         return {
           success: true,
           data: {
