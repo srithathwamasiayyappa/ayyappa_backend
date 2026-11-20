@@ -1,5 +1,7 @@
 import { Controller, Get, Post, Put, Param, Query, Body, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import * as fs from 'fs';
+import * as path from 'path';
 
 function resolveCategoryDeity(slug: string = '', title: string = '') {
   const s = `${slug} ${title}`.toLowerCase();
@@ -662,11 +664,25 @@ export class CategoriesController {
   ) {
     const targetLang = (lang || 'en').toLowerCase().trim();
     const isNum = !isNaN(Number(slugOrId));
-    const whereClause: any = isNum ? { id: Number(slugOrId) } : { slug: slugOrId };
+
+    // Resolve aliases (nithyapooja <-> nithya-pooja-laghu-vidhanam <-> daily-pooja)
+    let lookupSlug = slugOrId;
+    if (slugOrId === 'nithya-pooja-laghu-vidhanam' || slugOrId === 'daily-pooja' || slugOrId === 'nitya-pooja') {
+      lookupSlug = 'nithyapooja';
+    }
+
+    const orWhere: any[] = [];
+    if (isNum) orWhere.push({ id: Number(slugOrId) });
+    orWhere.push({ slug: slugOrId });
+    if (lookupSlug !== slugOrId) orWhere.push({ slug: lookupSlug });
+    if (slugOrId.includes('nithya')) {
+      orWhere.push({ slug: 'nithyapooja' });
+      orWhere.push({ slug: 'nithya-pooja-laghu-vidhanam' });
+    }
 
     try {
-      const category = await this.prisma.contentCategory.findFirst({
-        where: whereClause,
+      let category = await this.prisma.contentCategory.findFirst({
+        where: { OR: orWhere },
         include: {
           parent: {
             include: {
@@ -681,16 +697,39 @@ export class CategoriesController {
         }
       });
 
-      if (category) {
-        const preferred = category.translations.find((t: any) => t.language?.code === targetLang) || category.translations[0];
-        const teTranslation = category.translations.find((t: any) => t.language?.code === 'te');
-        const enTranslation = category.translations.find((t: any) => t.language?.code === 'en');
-        const parentPref = category.parent?.translations?.find((t: any) => t.language?.code === targetLang) || category.parent?.translations?.[0];
-        const pSlug = category.parent?.slug || 'pooja';
+      // If not in Prisma DB yet, fallback to backup_ayyappa_audit.json
+      let auditCatMatch: any = null;
+      try {
+        const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
+        if (fs.existsSync(auditPath)) {
+          const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
+          auditCatMatch = audit.categories?.find((c: any) =>
+            c.slug === slugOrId ||
+            c.slug === lookupSlug ||
+            (slugOrId.includes('nithya') && c.slug === 'nithyapooja') ||
+            (isNum && c.id === Number(slugOrId))
+          );
+        }
+      } catch (_) {}
 
-        const titleFormatted = category.slug.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
-        const finalTitle = preferred?.title || titleFormatted;
-        const deityResolved = resolveCategoryDeity(category.slug, finalTitle);
+      if (category || auditCatMatch) {
+        const preferred = category?.translations?.find((t: any) => t.language?.code === targetLang) || category?.translations?.[0];
+        const teTranslation = category?.translations?.find((t: any) => t.language?.code === 'te');
+        const enTranslation = category?.translations?.find((t: any) => t.language?.code === 'en');
+        const parentPref = category?.parent?.translations?.find((t: any) => t.language?.code === targetLang) || category?.parent?.translations?.[0];
+        const pSlug = category?.parent?.slug || 'pooja';
+
+        const rawSlug = category?.slug || auditCatMatch?.slug || slugOrId;
+        const titleFormatted = rawSlug.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+
+        let auditLangId = targetLang === 'te' ? 1 : targetLang === 'kn' ? 2 : targetLang === 'ta' ? 4 : targetLang === 'hi' ? 5 : 3;
+        const auditTrans = auditCatMatch?.translations?.find((t: any) => t.languageId === auditLangId) || auditCatMatch?.translations?.[0];
+
+        const finalTitle = preferred?.title || auditTrans?.title || titleFormatted;
+        const finalTeTitle = teTranslation?.title || (auditCatMatch?.translations?.find((t: any) => t.languageId === 1)?.title) || finalTitle;
+        const finalEnTitle = enTranslation?.title || (auditCatMatch?.translations?.find((t: any) => t.languageId === 3)?.title) || titleFormatted;
+
+        const deityResolved = resolveCategoryDeity(rawSlug, finalTitle);
 
         // Fetch custom image or assign dedicated artwork
         let customImages: Record<string, string> = {};
@@ -699,10 +738,10 @@ export class CategoriesController {
           if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
         } catch (_) {}
 
-        let resolvedImage = customImages[String(category.id)] || customImages[category.slug];
+        let resolvedImage = customImages[String(category?.id)] || customImages[rawSlug];
         if (!resolvedImage) {
-          const s = category.slug.toLowerCase();
-          if (s.includes('shiva-linga') || s.includes('simple') || s.includes('nithyapooja')) resolvedImage = '/images/pooja/pooja-card-1-ref.png';
+          const s = rawSlug.toLowerCase();
+          if (s.includes('shiva-linga') || s.includes('simple') || s.includes('nithya')) resolvedImage = '/images/pooja/pooja-card-1-ref.png';
           else if (s.includes('subramanya') || s.includes('murugan')) resolvedImage = '/images/pooja/pooja-card-2-ref.png';
           else if (s.includes('mantrapushpam') || s.includes('sharanu') || s.includes('slogans')) resolvedImage = '/images/pooja/pooja-card-3-ref.png';
           else if (s.includes('harathi') || s.includes('deepa')) resolvedImage = '/images/pooja/pooja-card-4-ref.png';
@@ -714,54 +753,65 @@ export class CategoriesController {
           else resolvedImage = '/images/pooja/pooja-card-1-ref.png';
         }
 
-        // Process procedure steps and mantras from devotional contents
+        // Full scripture text (contains the complete, authentic Telugu slokas & mantras)
+        let fullScriptureText = preferred?.description || auditTrans?.description || '';
+
+        // Extract instruction note if present
+        let instructionNote = '';
+        if (fullScriptureText.includes('సూచన :') || fullScriptureText.includes('సూచన:')) {
+          const parts = fullScriptureText.split(/\n\s*\n/);
+          instructionNote = parts[0].replace(/^సూచన\s*:\s*/, '').trim();
+        }
+
+        // Process procedure steps and mantras
         const procedure: Array<{ step: number; title: string; desc: string; mantra?: string }> = [];
         const mantras: Array<{ title: string; script: string; transliteration: string; meaning: string }> = [];
 
-        category.devotionalContents.forEach((dc: any) => {
-          if (dc.sacredText) {
-            // Split sections if contains [ Section Title ]
-            const sections = dc.sacredText.split(/(?=\[\s*[^\]]+\s*\])/g).filter(Boolean);
-            if (sections.length > 1) {
-              sections.forEach((sec: string, sIdx: number) => {
-                const headerMatch = sec.match(/\[\s*([^\]]+)\s*\]/);
-                const secTitle = headerMatch ? headerMatch[1].trim() : `Step ${sIdx + 1}`;
-                const secBody = sec.replace(/\[\s*[^\]]+\s*\]/, '').trim();
+        if (category?.devotionalContents && category.devotionalContents.length > 0) {
+          category.devotionalContents.forEach((dc: any) => {
+            if (dc.sacredText) {
+              const sections = dc.sacredText.split(/(?=\[\s*[^\]]+\s*\])/g).filter(Boolean);
+              if (sections.length > 1) {
+                sections.forEach((sec: string, sIdx: number) => {
+                  const headerMatch = sec.match(/\[\s*([^\]]+)\s*\]/);
+                  const secTitle = headerMatch ? headerMatch[1].trim() : `Step ${sIdx + 1}`;
+                  const secBody = sec.replace(/\[\s*[^\]]+\s*\]/, '').trim();
+                  procedure.push({
+                    step: procedure.length + 1,
+                    title: secTitle,
+                    desc: `Recite and perform with devotion:`,
+                    mantra: secBody
+                  });
+                  mantras.push({
+                    title: secTitle,
+                    script: secBody,
+                    transliteration: '',
+                    meaning: dc.meaning || 'Sacred verse with divine blessing.'
+                  });
+                });
+              } else {
                 procedure.push({
                   step: procedure.length + 1,
-                  title: secTitle,
-                  desc: `Recite and perform with devotion:`,
-                  mantra: secBody
+                  title: dc.title || `Sacred Chanting Step`,
+                  desc: dc.meaning || `Chant the divine mantras with pure heart.`,
+                  mantra: dc.sacredText
                 });
                 mantras.push({
-                  title: secTitle,
-                  script: secBody,
+                  title: dc.title || `Maha Mantra`,
+                  script: dc.sacredText,
                   transliteration: '',
-                  meaning: dc.meaning || 'Sacred verse with divine blessing.'
+                  meaning: dc.meaning || 'Sacred verse.'
                 });
-              });
-            } else {
-              procedure.push({
-                step: procedure.length + 1,
-                title: dc.title || `Sacred Chanting Step`,
-                desc: dc.meaning || `Chant the divine mantras with pure heart.`,
-                mantra: dc.sacredText
-              });
-              mantras.push({
-                title: dc.title || `Maha Mantra`,
-                script: dc.sacredText,
-                transliteration: '',
-                meaning: dc.meaning || 'Sacred verse.'
-              });
+              }
             }
-          }
-        });
+          });
+        }
 
         // Default procedures if none parsed
         if (procedure.length === 0) {
           procedure.push(
             { step: 1, title: 'Shuddi & Deeparadhana', desc: 'Bathe with cold water, apply Vibhuti and Chandanam, light deepam with pure sesame or ghee.', mantra: 'ఓం దీపజ్యోతిః పరబ్రహ్మ దీపజ్యోతిర్జనార్దనః | దీపో హరతు మే పాపం సంధ్యాదీప నమోస్తుతే ||' },
-            { step: 2, title: 'Prarthana & Sankalpam', desc: 'Make the solemn sankalpam for spiritual purity, family well-being, and divine protection.', mantra: 'మమ ఉపాత్త సమస్త దురితక్షయద్వారా శ్రీపరమేశ్వర ప్రీత్యర్థం శుభే శోభనే ముహూర్తే పూజాకర్మ కరిష్యే.' },
+            { step: 2, title: 'Prarthana & Sankalpam', desc: 'Make the solemn sankalpam for spiritual purity, family well-being, and divine protection.', mantra: 'శుక్లాంబరధరం విష్ణుం శశివర్ణం చతుర్భుజమ్ | ప్రసన్నవదనం ధ్యాయేత్ సర్వవిఘ్నోపశాంతయే ||' },
             { step: 3, title: 'Sacred Pooja & Samarpanam', desc: 'Perform the holy offerings, flowers, naivedyam, and conclude with mangala harathi.', mantra: 'స్వామియే శరణం అయ్యప్ప | శ్రీ గురుభ్యో నమః' }
           );
         }
@@ -769,8 +819,8 @@ export class CategoriesController {
         if (mantras.length === 0) {
           mantras.push({
             title: `${finalTitle} Sacred Sloka`,
-            script: 'ఓం శ్రీ స్వామియే శరణం అయ్యప్ప | ఓం నమో భగవతే వాసుదేవాయ ||',
-            transliteration: 'Om Sri Swamiye Saranam Ayyappa | Om Namo Bhagavate Vasudevaya ||',
+            script: 'శుక్లాంబరధరం విష్ణుం శశివర్ణం చతుర్భుజమ్ |\nప్రసన్నవదనం ధ్యాయేత్ సర్వవిఘ్నోపశాంతయే ||\n\nసరస్వతీ నమస్తుభ్యం వరదే కామరూపిణీ |\nవిద్యారంభం కరిష్యామి సిద్ధిర్భవతు మే సదా ||',
+            transliteration: 'Suklambaradharam Vishnum Sasivarnam Chaturbhujam | Prasannavadanam Dhyayet Sarvavighnopasantaye ||',
             meaning: preferred?.description || 'Divine prayers dedicated to your chosen deity.'
           });
         }
@@ -778,17 +828,19 @@ export class CategoriesController {
         return {
           success: true,
           data: {
-            id: category.slug,
-            rawId: category.id,
-            slug: category.slug,
+            id: rawSlug,
+            rawId: category?.id || auditCatMatch?.id,
+            slug: rawSlug,
             category: pSlug,
             parentSlug: pSlug,
             parentTitle: parentPref?.title || pSlug,
             title: finalTitle,
-            titleTelugu: teTranslation?.title || finalTitle,
-            titleEnglish: enTranslation?.title || titleFormatted,
-            subtitle: preferred?.description || `Complete sacred vidhanam, procedure and verses for ${finalTitle}.`,
-            overview: preferred?.description || `Sacred worship procedure and divine blessings for ${finalTitle}.`,
+            titleTelugu: finalTeTitle,
+            titleEnglish: finalEnTitle,
+            subtitle: preferred?.description?.slice(0, 150) || `Complete sacred vidhanam, procedure and verses for ${finalTitle}.`,
+            overview: preferred?.description?.slice(0, 300) || `Sacred worship procedure and divine blessings for ${finalTitle}.`,
+            fullScriptureText,
+            instructionNote,
             heroImage: resolvedImage,
             badge: 'Daily Devotion',
             badgeClass: 'badge-daily',
