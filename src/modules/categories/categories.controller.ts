@@ -1,6 +1,32 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 
+function resolveCategoryDeity(slug: string = '', title: string = '') {
+  const s = `${slug} ${title}`.toLowerCase();
+  if (/ayyap|sastha|harivarasanam|shabarimala|uthara|sannidhanam|padi|maaladharan|sharanu/.test(s)) {
+    return { deityId: 'ayyappa', deityName: 'Lord Ayyappa' };
+  }
+  if (/shiva|linga|bilva|rudra|natara|mrityunjaya/.test(s)) {
+    return { deityId: 'shiva', deityName: 'Lord Shiva' };
+  }
+  if (/venkates|vishnu|koodalmanikya|achyuta|govinda|narayana|perumal/.test(s)) {
+    return { deityId: 'venkateswara', deityName: 'Lord Venkateswara' };
+  }
+  if (/ganesh|vignesh|vinayak|ganapath|modak/.test(s)) {
+    return { deityId: 'ganesha', deityName: 'Lord Ganesha' };
+  }
+  if (/devi|durga|lakshmi|lalitha|kanakadhara|mahalakshmi|meenakshi|kamakshi|saraswathi|gomatha/.test(s)) {
+    return { deityId: 'devi', deityName: 'Goddess Lakshmi / Durga' };
+  }
+  if (/hanuman|anjaneya|maruti|bajrang|sundarakanda/.test(s)) {
+    return { deityId: 'hanuman', deityName: 'Lord Hanuman' };
+  }
+  if (/subrahmanya|murugan|kartikeya|saravana|shanmukha|vel|skanda/.test(s)) {
+    return { deityId: 'murugan', deityName: 'Lord Murugan' };
+  }
+  return { deityId: 'all', deityName: 'All Deities' };
+}
+
 @Controller('categories')
 export class CategoriesController {
   constructor(private readonly prisma: PrismaService) {}
@@ -404,13 +430,14 @@ export class CategoriesController {
     return { success: false, message: 'Stotra not found' };
   }
 
-  // 1c. Devotional Subcategories Endpoint (Direct from MySQL with parent filtering)
+  // 1c. Devotional Subcategories Endpoint (Direct from MySQL with parent & deity filtering)
   @Get('subcategories')
   async getSubcategories(
     @Query('parent') parent?: string,
     @Query('parentId') parentId?: string,
     @Query('lang') lang = 'en',
-    @Query('search') search?: string
+    @Query('search') search?: string,
+    @Query('deity') deity?: string
   ) {
     const parentKey = parent || parentId;
     const targetLang = (lang || 'en').toLowerCase().trim();
@@ -484,39 +511,51 @@ export class CategoriesController {
           if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
         } catch (_) {}
 
+        let mappedItems = items.map(cat => {
+          const preferred = cat.translations.find((t: any) => t.language?.code === targetLang) || cat.translations[0];
+          const parentPref = cat.parent?.translations?.find((t: any) => t.language?.code === targetLang) || cat.parent?.translations?.[0];
+          const pSlug = cat.parent?.slug || 'slokas';
+          const customImg = customImages[String(cat.id)] || customImages[cat.slug];
+
+          const titleFormatted = cat.slug.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+          const finalTitle = (preferred?.title && preferred.title !== cat.slug) ? preferred.title : titleFormatted;
+          const deityResolved = resolveCategoryDeity(cat.slug, finalTitle);
+
+          return {
+            id: String(cat.id),
+            slug: cat.slug,
+            title: finalTitle,
+            desc: preferred?.description || '',
+            description: preferred?.description || '',
+            parentId: cat.parentId,
+            parentSlug: pSlug,
+            parentTitle: parentPref ? parentPref.title : pSlug,
+            displayOrder: cat.displayOrder,
+            isAudio: cat.isAudio,
+            imageUrl: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
+            image: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
+            duration: '10 minutes',
+            badge: 'Daily',
+            badgeClass: 'badge-daily',
+            deityId: deityResolved.deityId,
+            deityName: deityResolved.deityName,
+            type: cat.isAudio ? 'Audio / Bhajan' : 'Vidhanam / Sloka'
+          };
+        });
+
+        // Filter by deity if specified
+        if (deity && deity !== 'all') {
+          const normDeity = deity.toLowerCase().replace(/^(lord-|goddess-)/, '');
+          mappedItems = mappedItems.filter(item => {
+            const itemD = (item.deityId || '').toLowerCase().replace(/^(lord-|goddess-)/, '');
+            return itemD === normDeity || itemD === 'all';
+          });
+        }
+
         return {
           success: true,
-          data: items.map(cat => {
-            const preferred = cat.translations.find((t: any) => t.language?.code === targetLang) || cat.translations[0];
-            const parentPref = cat.parent?.translations?.find((t: any) => t.language?.code === targetLang) || cat.parent?.translations?.[0];
-            const pSlug = cat.parent?.slug || 'slokas';
-            const customImg = customImages[String(cat.id)] || customImages[cat.slug];
-
-            const titleFormatted = cat.slug.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
-            const finalTitle = (preferred?.title && preferred.title !== cat.slug) ? preferred.title : titleFormatted;
-
-            return {
-              id: String(cat.id),
-              slug: cat.slug,
-              title: finalTitle,
-              desc: preferred?.description || '',
-              description: preferred?.description || '',
-              parentId: cat.parentId,
-              parentSlug: pSlug,
-              parentTitle: parentPref ? parentPref.title : pSlug,
-              displayOrder: cat.displayOrder,
-              isAudio: cat.isAudio,
-              imageUrl: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
-              image: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
-              duration: '10 minutes',
-              badge: 'Daily',
-              badgeClass: 'badge-daily',
-              deityId: 'all',
-              deityName: '',
-              type: cat.isAudio ? 'Audio / Bhajan' : 'Vidhanam / Sloka'
-            };
-          }),
-          count: items.length
+          data: mappedItems,
+          count: mappedItems.length
         };
       }
     } catch (err) {
@@ -528,6 +567,49 @@ export class CategoriesController {
       data: [],
       count: 0
     };
+  }
+
+  // Direct convenience endpoints for target pages:
+  @Get('pooja-vidhanam')
+  async getPoojaVidhanam(
+    @Query('lang') lang = 'en',
+    @Query('search') search?: string,
+    @Query('deity') deity?: string
+  ) {
+    return this.getSubcategories('pooja', undefined, lang, search, deity);
+  }
+
+  @Get('slokas')
+  async getSlokas(
+    @Query('lang') lang = 'en',
+    @Query('search') search?: string,
+    @Query('deity') deity?: string
+  ) {
+    return this.getSubcategories('slokas', undefined, lang, search, deity);
+  }
+
+  @Get('bhajans')
+  async getBhajans(
+    @Query('lang') lang = 'en',
+    @Query('search') search?: string,
+    @Query('deity') deity?: string
+  ) {
+    return this.getSubcategories('songs', undefined, lang, search, deity);
+  }
+
+  @Get('deities')
+  async getDeitiesList(@Query('lang') lang = 'en') {
+    const list = [
+      { id: 'ayyappa', slug: 'lord-ayyappa', name: 'Lord Ayyappa', image: '/images/deities/lord_ayyappa.png', isActive: true, sortOrder: 1 },
+      { id: 'shiva', slug: 'lord-shiva', name: 'Lord Shiva', image: '/images/deities/lord_shiva.png', isActive: true, sortOrder: 2 },
+      { id: 'venkateswara', slug: 'lord-venkateswara', name: 'Lord Venkateswara', image: '/images/deities/lord_vishnu.png', isActive: true, sortOrder: 3 },
+      { id: 'ganesha', slug: 'lord-ganesha', name: 'Lord Ganesha', image: '/images/deities/lord_ganesha.png', isActive: true, sortOrder: 4 },
+      { id: 'devi', slug: 'goddess-lakshmi-durga', name: 'Goddess Lakshmi / Durga', image: '/images/deities/goddess_devi.png', isActive: true, sortOrder: 5 },
+      { id: 'hanuman', slug: 'lord-hanuman', name: 'Lord Hanuman', image: '/images/deities/hanuman.jpg', isActive: true, sortOrder: 6 },
+      { id: 'murugan', slug: 'lord-murugan', name: 'Lord Murugan', image: '/images/deities/lord_murugan.png', isActive: true, sortOrder: 7 },
+      { id: 'all', slug: 'all-deities', name: 'All Deities', image: '/images/deities/saranam_deity_emblem.png', isActive: true, sortOrder: 8 },
+    ];
+    return { success: true, data: list };
   }
 
   @Get(':id')
