@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Query, Body, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 
 function resolveCategoryDeity(slug: string = '', title: string = '') {
@@ -430,14 +430,17 @@ export class CategoriesController {
     return { success: false, message: 'Stotra not found' };
   }
 
-  // 1c. Devotional Subcategories Endpoint (Direct from MySQL with parent & deity filtering)
+  // 1c. Devotional Subcategories Endpoint (Direct from MySQL with parent, deity, search & server-side filter)
   @Get('subcategories')
   async getSubcategories(
     @Query('parent') parent?: string,
     @Query('parentId') parentId?: string,
     @Query('lang') lang = 'en',
     @Query('search') search?: string,
-    @Query('deity') deity?: string
+    @Query('deity') deity?: string,
+    @Query('filter') filter?: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '100'
   ) {
     const parentKey = parent || parentId;
     const targetLang = (lang || 'en').toLowerCase().trim();
@@ -483,24 +486,13 @@ export class CategoriesController {
         isArchived: false,
       };
 
-      if (search && search.trim() !== '') {
-        const q = search.trim();
-        where.AND = [
-          {
-            OR: [
-              { slug: { contains: q } },
-              { translations: { some: { title: { contains: q } } } }
-            ]
-          }
-        ];
-      }
-
       const items = await this.prisma.contentCategory.findMany({
         where,
         orderBy: { displayOrder: 'asc' },
         include: {
           parent: { include: { translations: { include: { language: true } } } },
-          translations: { include: { language: true } }
+          translations: { include: { language: true } },
+          devotionalContents: { select: { id: true, title: true, isPublished: true } }
         }
       });
 
@@ -570,7 +562,7 @@ export class CategoriesController {
           if (s.includes('mandala') || s.includes('makara') || s.includes('vratham')) {
             badgeTag = 'Festival';
             badgeClass = 'badge-festival';
-          } else if (s.includes('simple') || s.includes('pratha') || s.includes('bhojana')) {
+          } else if (s.includes('simple') || s.includes('pratha') || s.includes('bhojana') || s.includes('poorvaangamu')) {
             badgeTag = 'Beginner';
             badgeClass = 'badge-beginner';
           } else if (s.includes('harivarasanam') || s.includes('lingashtakam') || s.includes('vishnu-sahasra') || s.includes('kanakadhara')) {
@@ -602,7 +594,7 @@ export class CategoriesController {
           };
         });
 
-        // Filter by deity if specified
+        // 1. Server-side Deity Filtering
         if (deity && deity !== 'all') {
           const normDeity = deity.toLowerCase().replace(/^(lord-|goddess-)/, '');
           mappedItems = mappedItems.filter(item => {
@@ -611,10 +603,42 @@ export class CategoriesController {
           });
         }
 
+        // 2. Server-side Search Filtering
+        if (search && search.trim() !== '') {
+          const q = search.trim().toLowerCase();
+          mappedItems = mappedItems.filter(item => {
+            return (
+              item.title.toLowerCase().includes(q) ||
+              item.desc.toLowerCase().includes(q) ||
+              item.slug.toLowerCase().includes(q) ||
+              item.deityName.toLowerCase().includes(q)
+            );
+          });
+        }
+
+        // 3. Server-side Category / Badge Filter (All, Beginner, Festival, Daily, Popular)
+        if (filter && filter !== 'All') {
+          mappedItems = mappedItems.filter(item => {
+            if (filter === 'Popular') {
+              return item.badge === 'Popular' || item.filterTag === 'Popular';
+            }
+            return item.badge === filter || item.filterTag === filter;
+          });
+        }
+
+        // 4. Server-side Pagination
+        const total = mappedItems.length;
+        const pageNum = Math.max(1, parseInt(page, 10) || 1);
+        const limitNum = Math.max(1, parseInt(limit, 10) || 100);
+        const paginatedItems = mappedItems.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
         return {
           success: true,
-          data: mappedItems,
-          count: mappedItems.length
+          data: paginatedItems,
+          total,
+          count: paginatedItems.length,
+          page: pageNum,
+          limit: limitNum
         };
       }
     } catch (err) {
@@ -624,7 +648,115 @@ export class CategoriesController {
     return {
       success: true,
       data: [],
+      total: 0,
       count: 0
+    };
+  }
+
+  // 1d. Store Subcategory Image Endpoint
+  @Post('subcategories/:id/image')
+  async storeSubcategoryImage(
+    @Param('id') id: string,
+    @Body() body: { imageUrl: string }
+  ) {
+    if (!body?.imageUrl) {
+      throw new BadRequestException('imageUrl is required');
+    }
+
+    let customImages: Record<string, string> = {};
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+    if (setting && setting.value) {
+      try {
+        customImages = JSON.parse(setting.value);
+      } catch (_) {}
+    }
+
+    customImages[id] = body.imageUrl;
+
+    await this.prisma.appSetting.upsert({
+      where: { key: 'subcategory_images' },
+      create: { key: 'subcategory_images', value: JSON.stringify(customImages) },
+      update: { value: JSON.stringify(customImages) }
+    });
+
+    return {
+      success: true,
+      message: `Image stored successfully for subcategory ${id}`,
+      data: { id, imageUrl: body.imageUrl }
+    };
+  }
+
+  // 1e. Batch Store Images Endpoint
+  @Put('subcategories/images')
+  async storeBatchImages(@Body() body: { images: Record<string, string> }) {
+    if (!body?.images || typeof body.images !== 'object') {
+      throw new BadRequestException('images object mapping is required');
+    }
+
+    let customImages: Record<string, string> = {};
+    const setting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+    if (setting && setting.value) {
+      try {
+        customImages = JSON.parse(setting.value);
+      } catch (_) {}
+    }
+
+    Object.assign(customImages, body.images);
+
+    await this.prisma.appSetting.upsert({
+      where: { key: 'subcategory_images' },
+      create: { key: 'subcategory_images', value: JSON.stringify(customImages) },
+      update: { value: JSON.stringify(customImages) }
+    });
+
+    return {
+      success: true,
+      message: 'Subcategory images stored successfully',
+      count: Object.keys(customImages).length,
+      data: customImages
+    };
+  }
+
+  // 1f. View Seed Data Endpoint
+  @Get('seed-data')
+  async getSeedData(@Query('parent') parent?: string) {
+    const where: any = { parentId: { not: null } };
+    if (parent) {
+      where.parent = { slug: parent };
+    }
+
+    const [subcategories, translationsCount, devotionalContentsCount, languages] = await Promise.all([
+      this.prisma.contentCategory.findMany({
+        where,
+        orderBy: { displayOrder: 'asc' },
+        include: {
+          parent: { select: { id: true, slug: true } },
+          translations: { select: { id: true, title: true, description: true, language: { select: { code: true, name: true } } } },
+          devotionalContents: { select: { id: true, slug: true, title: true, isPublished: true } }
+        }
+      }),
+      this.prisma.contentTranslation.count(),
+      this.prisma.devotionalContent.count(),
+      this.prisma.language.findMany()
+    ]);
+
+    return {
+      success: true,
+      message: 'Seed data retrieved successfully from DB',
+      data: {
+        totalSubcategories: subcategories.length,
+        translationsCount,
+        devotionalContentsCount,
+        languages,
+        subcategories: subcategories.map(s => ({
+          id: s.id,
+          slug: s.slug,
+          parentSlug: s.parent?.slug,
+          displayOrder: s.displayOrder,
+          translations: s.translations.map(t => ({ lang: t.language.code, title: t.title })),
+          devotionalContentsCount: s.devotionalContents?.length || 0
+        }))
+      }
     };
   }
 
