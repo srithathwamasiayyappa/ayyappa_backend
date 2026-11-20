@@ -825,6 +825,73 @@ export class CategoriesController {
           });
         }
 
+        // Resolve child subcategories (for deities with multiple types, e.g. Mahaganapathi 4 types)
+        let children: any[] = [];
+        const catId = category?.id || auditCatMatch?.id;
+
+        try {
+          if (catId) {
+            const dbChildren = await this.prisma.contentCategory.findMany({
+              where: { parentId: catId },
+              include: { translations: { include: { language: true } } },
+              orderBy: { displayOrder: 'asc' }
+            });
+            if (dbChildren && dbChildren.length > 0) {
+              children = dbChildren.map((ch: any) => {
+                const chPref = ch.translations?.find((t: any) => t.language?.code === targetLang) || ch.translations?.[0];
+                return {
+                  id: String(ch.id),
+                  slug: ch.slug,
+                  title: chPref?.title || ch.slug,
+                  imageUrl: '/images/deities/card_ganesha.jpg'
+                };
+              });
+            }
+          }
+        } catch (_) {}
+
+        if (children.length === 0 && auditCatMatch) {
+          try {
+            const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
+            if (fs.existsSync(auditPath)) {
+              const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
+              const auditChildren = audit.categories?.filter((c: any) => c.parentId === auditCatMatch.id || (auditCatMatch.id === 6 && c.parentId === 6));
+              if (auditChildren && auditChildren.length > 0) {
+                children = auditChildren.map((ch: any) => {
+                  const chTrans = ch.translations?.find((t: any) => t.languageId === auditLangId) || ch.translations?.[0];
+                  return {
+                    id: String(ch.id),
+                    slug: ch.slug,
+                    title: chTrans?.title || ch.slug,
+                    imageUrl: '/images/deities/card_ganesha.jpg'
+                  };
+                });
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (children.length === 0 && (rawSlug.includes('ganapa') || rawSlug.includes('vignesh') || rawSlug === 'ganapathi-pooja')) {
+          try {
+            const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
+            if (fs.existsSync(auditPath)) {
+              const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
+              const auditChildren = audit.categories?.filter((c: any) => c.parentId === 6);
+              if (auditChildren && auditChildren.length > 0) {
+                children = auditChildren.map((ch: any) => {
+                  const chTrans = ch.translations?.find((t: any) => t.languageId === auditLangId) || ch.translations?.[0];
+                  return {
+                    id: String(ch.id),
+                    slug: ch.slug,
+                    title: chTrans?.title || ch.slug,
+                    imageUrl: '/images/deities/card_ganesha.jpg'
+                  };
+                });
+              }
+            }
+          } catch (_) {}
+        }
+
         return {
           success: true,
           data: {
@@ -850,6 +917,7 @@ export class CategoriesController {
             deityId: deityResolved.deityId,
             deityName: deityResolved.deityName,
             deityTelugu: deityResolved.deityId === 'ayyappa' ? 'శ్రీ అయ్యప్ప స్వామి' : deityResolved.deityId === 'shiva' ? 'పరమశివుడు' : deityResolved.deityId === 'ganesha' ? 'శ్రీ మహాగణపతి' : deityResolved.deityId === 'devi' ? 'శ్రీ దేవి అమ్మవారు' : deityResolved.deityId === 'murugan' ? 'శ్రీ సుబ్రహ్మణ్యేశ్వర స్వామి' : deityResolved.deityId === 'venkateswara' ? 'శ్రీ వేంకటేశ్వర స్వామి' : 'సర్వ దేవతలు',
+            children,
             procedure,
             materials: [
               { name: 'Pure Cow Ghee / Sesame Oil for Deepam', qty: '100 ml', icon: 'Flame' },
