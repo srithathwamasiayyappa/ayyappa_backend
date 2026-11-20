@@ -913,6 +913,37 @@ export class CategoriesController {
           } catch (_) {}
         }
 
+        if (children.length === 0 && (rawSlug.includes('ashtottaramulu') || rawSlug.includes('ashtothram') || catId === 21)) {
+          try {
+            const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
+            if (fs.existsSync(auditPath)) {
+              const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
+              const auditChildren = audit.categories?.filter((c: any) => c.parentId === 21);
+              if (auditChildren && auditChildren.length > 0) {
+                children = auditChildren.map((ch: any) => {
+                  const chTrans = ch.translations?.find((t: any) => t.languageId === auditLangId) || ch.translations?.[0];
+                  const s = ch.slug.toLowerCase();
+                  let img = '/images/deities/card_ayyappa.jpg';
+                  if (s.includes('vignesh') || s.includes('ganapa')) img = '/images/deities/card_ganesha.jpg';
+                  else if (s.includes('subrahmanya') || s.includes('murugan')) img = '/images/deities/card_murugan.jpg';
+                  else if (s.includes('shiva') || s.includes('dakshinamurthy') || s.includes('veerabhadra') || s.includes('dattatreya') || s.includes('raghavendra')) img = '/images/deities/card_shiva.jpg';
+                  else if (s.includes('vishnu') || s.includes('venkateshwara') || s.includes('vishvaksena')) img = '/images/deities/card_vishnu.jpg';
+                  else if (s.includes('gomatha')) img = '/images/pooja/pooja-card-5-ref.png';
+                  else if (s.includes('lalitha') || s.includes('lakshmi') || s.includes('saraswathi') || s.includes('durga') || s.includes('vasavi')) img = '/images/deities/card_devi.jpg';
+                  else if (s.includes('anjaneya') || s.includes('hanuman')) img = '/images/deities/hanuman.jpg';
+
+                  return {
+                    id: String(ch.id),
+                    slug: ch.slug,
+                    title: chTrans?.title || ch.slug,
+                    imageUrl: img
+                  };
+                });
+              }
+            }
+          } catch (_) {}
+        }
+
         return {
           success: true,
           data: {
