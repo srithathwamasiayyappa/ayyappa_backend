@@ -521,6 +521,53 @@ export class CategoriesController {
           const finalTitle = (preferred?.title && preferred.title !== cat.slug) ? preferred.title : titleFormatted;
           const deityResolved = resolveCategoryDeity(cat.slug, finalTitle);
 
+          // Dedicated high-resolution card artwork resolution
+          let resolvedImage = customImg;
+          if (!resolvedImage) {
+            const s = cat.slug.toLowerCase();
+            if (s.includes('shiva-linga') || s.includes('simple') || s.includes('nithyapooja')) resolvedImage = '/images/pooja/pooja-card-1-ref.png';
+            else if (s.includes('subramanya') || s.includes('murugan')) resolvedImage = '/images/pooja/pooja-card-2-ref.png';
+            else if (s.includes('mantrapushpam') || s.includes('sharanu') || s.includes('slogans')) resolvedImage = '/images/pooja/pooja-card-3-ref.png';
+            else if (s.includes('harathi') || s.includes('deepa')) resolvedImage = '/images/pooja/pooja-card-4-ref.png';
+            else if (s.includes('ganapa') || s.includes('vignesh') || s.includes('gomatha')) resolvedImage = '/images/pooja/pooja-card-5-ref.png';
+            else if (s.includes('abhisheka') || s.includes('koodalmanikya') || s.includes('bilva')) resolvedImage = '/images/pooja/pooja-card-6-ref.png';
+            else if (deityResolved.deityId === 'ayyappa') resolvedImage = '/images/pooja/card-banner-ayyappa-hd.png';
+            else if (deityResolved.deityId === 'ganesha') resolvedImage = '/images/pooja/card-banner-ganapathi-hd.png';
+            else if (deityResolved.deityId === 'devi') resolvedImage = '/images/pooja/card-banner-lakshmi-hd.png';
+            else if (deityResolved.deityId === 'venkateswara') resolvedImage = '/images/god-venkateswara.jpg';
+            else if (deityResolved.deityId === 'hanuman') resolvedImage = '/images/deities/hanuman.jpg';
+            else resolvedImage = `/images/subcategories/${pSlug}/${cat.slug}.webp`;
+          }
+
+          // Step count / verse count resolution based on ritual complexity
+          let stepsCount = '12 Steps';
+          const s = cat.slug.toLowerCase();
+          if (s.includes('simple') || s.includes('nithya')) stepsCount = '16 Steps';
+          else if (s.includes('subramanya')) stepsCount = '18 Steps';
+          else if (s.includes('mantra')) stepsCount = '8 Steps';
+          else if (s.includes('harathi')) stepsCount = '5 Steps';
+          else if (s.includes('ganapa')) stepsCount = '12 Steps';
+          else if (s.includes('abhisheka')) stepsCount = '21 Steps';
+          else if (s.includes('ashtottara')) stepsCount = '108 Names';
+          else if (s.includes('sahasranama')) stepsCount = '1000 Names';
+          else if (s.includes('dasakam')) stepsCount = '10 Stanzas';
+          else if (s.includes('stotra') || s.includes('sloka')) stepsCount = '8 Verses';
+          else if (pSlug === 'songs') stepsCount = 'Song & Lyrics';
+
+          // Badge tag resolution (Daily / Beginner / Festival / Popular)
+          let badgeTag = 'Daily';
+          let badgeClass = 'badge-daily';
+          if (s.includes('mandala') || s.includes('makara') || s.includes('vratham')) {
+            badgeTag = 'Festival';
+            badgeClass = 'badge-festival';
+          } else if (s.includes('simple') || s.includes('pratha') || s.includes('bhojana')) {
+            badgeTag = 'Beginner';
+            badgeClass = 'badge-beginner';
+          } else if (s.includes('harivarasanam') || s.includes('lingashtakam') || s.includes('vishnu-sahasra') || s.includes('kanakadhara')) {
+            badgeTag = 'Popular';
+            badgeClass = 'badge-popular';
+          }
+
           return {
             id: String(cat.id),
             slug: cat.slug,
@@ -532,14 +579,16 @@ export class CategoriesController {
             parentTitle: parentPref ? parentPref.title : pSlug,
             displayOrder: cat.displayOrder,
             isAudio: cat.isAudio,
-            imageUrl: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
-            image: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
+            imageUrl: resolvedImage,
+            image: resolvedImage,
             duration: '10 minutes',
-            badge: 'Daily',
-            badgeClass: 'badge-daily',
+            stepsCount,
+            badge: badgeTag,
+            badgeClass,
+            filterTag: badgeTag,
             deityId: deityResolved.deityId,
             deityName: deityResolved.deityName,
-            type: cat.isAudio ? 'Audio / Bhajan' : 'Vidhanam / Sloka'
+            type: cat.isAudio ? 'Audio / Bhajan' : (pSlug === 'pooja' ? 'Pooja' : pSlug === 'stotras' ? 'Stotra' : pSlug === 'slokas' ? 'Sloka' : 'Song')
           };
         });
 
