@@ -534,9 +534,19 @@ export class CategoriesController {
             else if (deityResolved.deityId === 'ayyappa') resolvedImage = '/images/pooja/card-banner-ayyappa-hd.png';
             else if (deityResolved.deityId === 'ganesha') resolvedImage = '/images/pooja/card-banner-ganapathi-hd.png';
             else if (deityResolved.deityId === 'devi') resolvedImage = '/images/pooja/card-banner-lakshmi-hd.png';
-            else if (deityResolved.deityId === 'venkateswara') resolvedImage = '/images/god-venkateswara.jpg';
-            else if (deityResolved.deityId === 'hanuman') resolvedImage = '/images/deities/hanuman.jpg';
-            else resolvedImage = `/images/subcategories/${pSlug}/${cat.slug}.webp`;
+            else if (deityResolved.deityId === 'venkateswara') resolvedImage = '/images/pooja/pooja-card-3-ref.png';
+            else if (deityResolved.deityId === 'hanuman') resolvedImage = '/images/pooja/pooja-card-4-ref.png';
+            else {
+              const cardRefs = [
+                '/images/pooja/pooja-card-1-ref.png',
+                '/images/pooja/pooja-card-2-ref.png',
+                '/images/pooja/pooja-card-3-ref.png',
+                '/images/pooja/pooja-card-4-ref.png',
+                '/images/pooja/pooja-card-5-ref.png',
+                '/images/pooja/pooja-card-6-ref.png'
+              ];
+              resolvedImage = cardRefs[cat.displayOrder % cardRefs.length] || '/images/pooja/pooja-card-1-ref.png';
+            }
           }
 
           // Step count / verse count resolution based on ritual complexity
