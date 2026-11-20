@@ -653,6 +653,187 @@ export class CategoriesController {
     };
   }
 
+  // 1c-detail. Devotional Subcategory Detail Endpoint
+  @Get('subcategories/:slugOrId')
+  async getSubcategoryDetail(
+    @Param('slugOrId') slugOrId: string,
+    @Query('lang') lang = 'en',
+    @Query('god') god?: string
+  ) {
+    const targetLang = (lang || 'en').toLowerCase().trim();
+    const isNum = !isNaN(Number(slugOrId));
+    const whereClause: any = isNum ? { id: Number(slugOrId) } : { slug: slugOrId };
+
+    try {
+      const category = await this.prisma.contentCategory.findFirst({
+        where: whereClause,
+        include: {
+          parent: {
+            include: {
+              translations: { include: { language: true } }
+            }
+          },
+          translations: { include: { language: true } },
+          devotionalContents: {
+            where: { isPublished: true },
+            orderBy: { displayOrder: 'asc' }
+          }
+        }
+      });
+
+      if (category) {
+        const preferred = category.translations.find((t: any) => t.language?.code === targetLang) || category.translations[0];
+        const teTranslation = category.translations.find((t: any) => t.language?.code === 'te');
+        const enTranslation = category.translations.find((t: any) => t.language?.code === 'en');
+        const parentPref = category.parent?.translations?.find((t: any) => t.language?.code === targetLang) || category.parent?.translations?.[0];
+        const pSlug = category.parent?.slug || 'pooja';
+
+        const titleFormatted = category.slug.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+        const finalTitle = preferred?.title || titleFormatted;
+        const deityResolved = resolveCategoryDeity(category.slug, finalTitle);
+
+        // Fetch custom image or assign dedicated artwork
+        let customImages: Record<string, string> = {};
+        try {
+          const imgSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+          if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
+        } catch (_) {}
+
+        let resolvedImage = customImages[String(category.id)] || customImages[category.slug];
+        if (!resolvedImage) {
+          const s = category.slug.toLowerCase();
+          if (s.includes('shiva-linga') || s.includes('simple') || s.includes('nithyapooja')) resolvedImage = '/images/pooja/pooja-card-1-ref.png';
+          else if (s.includes('subramanya') || s.includes('murugan')) resolvedImage = '/images/pooja/pooja-card-2-ref.png';
+          else if (s.includes('mantrapushpam') || s.includes('sharanu') || s.includes('slogans')) resolvedImage = '/images/pooja/pooja-card-3-ref.png';
+          else if (s.includes('harathi') || s.includes('deepa')) resolvedImage = '/images/pooja/pooja-card-4-ref.png';
+          else if (s.includes('ganapa') || s.includes('vignesh') || s.includes('gomatha')) resolvedImage = '/images/pooja/pooja-card-5-ref.png';
+          else if (s.includes('abhisheka') || s.includes('koodalmanikya') || s.includes('bilva')) resolvedImage = '/images/pooja/pooja-card-6-ref.png';
+          else if (deityResolved.deityId === 'ayyappa') resolvedImage = '/images/pooja/card-banner-ayyappa-hd.png';
+          else if (deityResolved.deityId === 'ganesha') resolvedImage = '/images/pooja/card-banner-ganapathi-hd.png';
+          else if (deityResolved.deityId === 'devi') resolvedImage = '/images/pooja/card-banner-lakshmi-hd.png';
+          else resolvedImage = '/images/pooja/pooja-card-1-ref.png';
+        }
+
+        // Process procedure steps and mantras from devotional contents
+        const procedure: Array<{ step: number; title: string; desc: string; mantra?: string }> = [];
+        const mantras: Array<{ title: string; script: string; transliteration: string; meaning: string }> = [];
+
+        category.devotionalContents.forEach((dc: any) => {
+          if (dc.sacredText) {
+            // Split sections if contains [ Section Title ]
+            const sections = dc.sacredText.split(/(?=\[\s*[^\]]+\s*\])/g).filter(Boolean);
+            if (sections.length > 1) {
+              sections.forEach((sec: string, sIdx: number) => {
+                const headerMatch = sec.match(/\[\s*([^\]]+)\s*\]/);
+                const secTitle = headerMatch ? headerMatch[1].trim() : `Step ${sIdx + 1}`;
+                const secBody = sec.replace(/\[\s*[^\]]+\s*\]/, '').trim();
+                procedure.push({
+                  step: procedure.length + 1,
+                  title: secTitle,
+                  desc: `Recite and perform with devotion:`,
+                  mantra: secBody
+                });
+                mantras.push({
+                  title: secTitle,
+                  script: secBody,
+                  transliteration: '',
+                  meaning: dc.meaning || 'Sacred verse with divine blessing.'
+                });
+              });
+            } else {
+              procedure.push({
+                step: procedure.length + 1,
+                title: dc.title || `Sacred Chanting Step`,
+                desc: dc.meaning || `Chant the divine mantras with pure heart.`,
+                mantra: dc.sacredText
+              });
+              mantras.push({
+                title: dc.title || `Maha Mantra`,
+                script: dc.sacredText,
+                transliteration: '',
+                meaning: dc.meaning || 'Sacred verse.'
+              });
+            }
+          }
+        });
+
+        // Default procedures if none parsed
+        if (procedure.length === 0) {
+          procedure.push(
+            { step: 1, title: 'Shuddi & Deeparadhana', desc: 'Bathe with cold water, apply Vibhuti and Chandanam, light deepam with pure sesame or ghee.', mantra: 'ఓం దీపజ్యోతిః పరబ్రహ్మ దీపజ్యోతిర్జనార్దనః | దీపో హరతు మే పాపం సంధ్యాదీప నమోస్తుతే ||' },
+            { step: 2, title: 'Prarthana & Sankalpam', desc: 'Make the solemn sankalpam for spiritual purity, family well-being, and divine protection.', mantra: 'మమ ఉపాత్త సమస్త దురితక్షయద్వారా శ్రీపరమేశ్వర ప్రీత్యర్థం శుభే శోభనే ముహూర్తే పూజాకర్మ కరిష్యే.' },
+            { step: 3, title: 'Sacred Pooja & Samarpanam', desc: 'Perform the holy offerings, flowers, naivedyam, and conclude with mangala harathi.', mantra: 'స్వామియే శరణం అయ్యప్ప | శ్రీ గురుభ్యో నమః' }
+          );
+        }
+
+        if (mantras.length === 0) {
+          mantras.push({
+            title: `${finalTitle} Sacred Sloka`,
+            script: 'ఓం శ్రీ స్వామియే శరణం అయ్యప్ప | ఓం నమో భగవతే వాసుదేవాయ ||',
+            transliteration: 'Om Sri Swamiye Saranam Ayyappa | Om Namo Bhagavate Vasudevaya ||',
+            meaning: preferred?.description || 'Divine prayers dedicated to your chosen deity.'
+          });
+        }
+
+        return {
+          success: true,
+          data: {
+            id: category.slug,
+            rawId: category.id,
+            slug: category.slug,
+            category: pSlug,
+            parentSlug: pSlug,
+            parentTitle: parentPref?.title || pSlug,
+            title: finalTitle,
+            titleTelugu: teTranslation?.title || finalTitle,
+            titleEnglish: enTranslation?.title || titleFormatted,
+            subtitle: preferred?.description || `Complete sacred vidhanam, procedure and verses for ${finalTitle}.`,
+            overview: preferred?.description || `Sacred worship procedure and divine blessings for ${finalTitle}.`,
+            heroImage: resolvedImage,
+            badge: 'Daily Devotion',
+            badgeClass: 'badge-daily',
+            duration: '15 mins',
+            difficulty: 'All Devotees',
+            bestTime: 'Morning (Pratah Kalam) or Evening (Sandhya)',
+            deityId: deityResolved.deityId,
+            deityName: deityResolved.deityName,
+            deityTelugu: deityResolved.deityId === 'ayyappa' ? 'శ్రీ అయ్యప్ప స్వామి' : deityResolved.deityId === 'shiva' ? 'పరమశివుడు' : deityResolved.deityId === 'ganesha' ? 'శ్రీ మహాగణపతి' : deityResolved.deityId === 'devi' ? 'శ్రీ దేవి అమ్మవారు' : deityResolved.deityId === 'murugan' ? 'శ్రీ సుబ్రహ్మణ్యేశ్వర స్వామి' : deityResolved.deityId === 'venkateswara' ? 'శ్రీ వేంకటేశ్వర స్వామి' : 'సర్వ దేవతలు',
+            procedure,
+            materials: [
+              { name: 'Pure Cow Ghee / Sesame Oil for Deepam', qty: '100 ml', icon: 'Flame' },
+              { name: 'Fresh Cotton Wicks (Vattulu)', qty: '1 Packet', icon: 'Sparkles' },
+              { name: 'Pure Vibhuti, Kumkum & Sandalwood (Gandham)', qty: '50g each', icon: 'Flower2' },
+              { name: 'Fresh Fragrant Flowers & Thulasi / Bilva Leaves', qty: '1 Basket', icon: 'Flower2' },
+              { name: 'Raw Coconuts & Betel Leaves with Supari', qty: '2 Coconuts, 5 Betel Leaves', icon: 'Layers' },
+              { name: 'Raw Rice with Turmeric (Akshintalu)', qty: '1 Bowl', icon: 'Sparkles' },
+              { name: 'Fresh Fruits or Naivedyam Prasad', qty: '1 Bowl', icon: 'Soup' },
+              { name: 'Pure Camphor (Karpooram) & Dhoop Sticks', qty: '1 Box', icon: 'Flame' }
+            ],
+            mantras,
+            benefits: [
+              'Brings profound peace of mind and destroys negative vibrations.',
+              'Instills spiritual strength, health, discipline and family harmony.',
+              'Neutralizes planetary doshams and brings auspicious beginnings.',
+              'Bestows benevolent divine protection of the presiding deity.'
+            ],
+            audioTrack: {
+              title: `${finalTitle} Devotional Audio`,
+              duration: '05:30',
+              ragam: 'Madhyamavathi'
+            }
+          }
+        };
+      }
+    } catch (err) {
+      console.warn('[Categories] getSubcategoryDetail error:', err);
+    }
+
+    return {
+      success: false,
+      message: `Subcategory ${slugOrId} not found`
+    };
+  }
+
   // 1d. Store Subcategory Image Endpoint
   @Post('subcategories/:id/image')
   async storeSubcategoryImage(
