@@ -5,25 +5,25 @@ import * as path from 'path';
 
 function resolveCategoryDeity(slug: string = '', title: string = '') {
   const s = `${slug} ${title}`.toLowerCase();
-  if (/ayyap|sastha|harivarasanam|shabarimala|uthara|sannidhanam|padi|maaladharan|sharanu/.test(s)) {
-    return { deityId: 'ayyappa', deityName: 'Lord Ayyappa' };
-  }
-  if (/shiva|linga|bilva|rudra|natara|mrityunjaya/.test(s)) {
-    return { deityId: 'shiva', deityName: 'Lord Shiva' };
-  }
-  if (/venkates|vishnu|koodalmanikya|achyuta|govinda|narayana|perumal/.test(s)) {
-    return { deityId: 'venkateswara', deityName: 'Lord Venkateswara' };
-  }
-  if (/ganesh|vignesh|vinayak|ganapath|modak/.test(s)) {
+  if (/ganesh|vignesh|vinayak|ganapath|modak|బొమ్మ|గణపతి|వినాయక|విఘ్నేశ్వర|గణేశ|గణప|మోదక/.test(s)) {
     return { deityId: 'ganesha', deityName: 'Lord Ganesha' };
   }
-  if (/devi|durga|lakshmi|lalitha|kanakadhara|mahalakshmi|meenakshi|kamakshi|saraswathi|gomatha/.test(s)) {
+  if (/devi|durga|lakshmi|lalitha|kanakadhara|mahalakshmi|meenakshi|kamakshi|saraswathi|gomatha|kamadhenu|parameshwari|akhilandeshwari|దండాల|అంబ|దేవి|లక్ష్మి|దుర్గ|లలిత|సరస్వతి|గోమాత|కామధేను|వరలక్ష్మి|మాళికాపురత్తమ్మ/.test(s)) {
     return { deityId: 'devi', deityName: 'Goddess Lakshmi / Durga' };
   }
-  if (/hanuman|anjaneya|maruti|bajrang|sundarakanda/.test(s)) {
+  if (/ayyap|sastha|harivarasanam|shabarimala|uthara|sannidhanam|padi|maaladharan|sharanu|harathi|గురు నాథ|గురునాథ|సాయంకాల|అయ్యప్ప|శాస్తా|శాస్త|శబరిమల|మాలాధారణ|హరివరాసనం|శరణం|హారతి|ఇరుముడి|పడి/.test(s)) {
+    return { deityId: 'ayyappa', deityName: 'Lord Ayyappa' };
+  }
+  if (/shiva|linga|bilva|rudra|natara|mrityunjaya|kedar|శివ|లింగ|బిల్వ|రుద్ర|మృత్యుంజయ|ఈశ్వర|కేదారేశ్వర|నటరాజ/.test(s)) {
+    return { deityId: 'shiva', deityName: 'Lord Shiva' };
+  }
+  if (/venkates|vishnu|koodalmanikya|achyuta|govinda|narayana|perumal|satyanarayana|guruvayoor|వేంకట|వెంకట|విష్ణు|సత్యనారాయణ|గోవింద|నారాయణ|శ్రీనివాస|గురువాయూరప్ప/.test(s)) {
+    return { deityId: 'venkateswara', deityName: 'Lord Venkateswara' };
+  }
+  if (/hanuman|anjaneya|maruti|bajrang|sundarakanda|హనుమాన్|ఆంజనేయ|మారుతి|రామదూత/.test(s)) {
     return { deityId: 'hanuman', deityName: 'Lord Hanuman' };
   }
-  if (/subrahmanya|murugan|kartikeya|saravana|shanmukha|vel|skanda/.test(s)) {
+  if (/subrahmanya|murugan|kartikeya|saravana|shanmukha|vel|skanda|pazhani|సుబ్రహ్మణ్య|మురుగన్|కార్తికేయ|షణ్ముఖ|స్కంద|పళని/.test(s)) {
     return { deityId: 'murugan', deityName: 'Lord Murugan' };
   }
   return { deityId: 'all', deityName: 'All Deities' };
@@ -601,7 +601,7 @@ export class CategoriesController {
           const normDeity = deity.toLowerCase().replace(/^(lord-|goddess-)/, '');
           mappedItems = mappedItems.filter(item => {
             const itemD = (item.deityId || '').toLowerCase().replace(/^(lord-|goddess-)/, '');
-            return itemD === normDeity || itemD === 'all';
+            return itemD === normDeity;
           });
         }
 
