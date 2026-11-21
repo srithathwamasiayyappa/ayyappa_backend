@@ -1,7 +1,5 @@
-import { Controller, Get, Post, Put, Param, Query, Body, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Query, Body, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
-import * as fs from 'fs';
-import * as path from 'path';
 
 function resolveCategoryDeity(slug: string = '', title: string = '') {
   const s = `${slug} ${title}`.toLowerCase();
@@ -95,105 +93,14 @@ export class CategoriesController {
         } catch {}
       }
     } catch (dbErr) {
-      // Graceful fallback if database is reconnecting
+      console.warn('[Categories] getCategoryServices database error:', dbErr);
     }
 
-    // Default static services fallback matching the official website & mobile API specification
-    const fallbackServices = [
-      { id: 'pooja', serviceId: 'pooja', title: 'Pooja Vidhanam', sub: 'Step-by-step sacred rituals', icon: 'Flame', url: '/subcategories', artwork: '/images/categories/art-pooja-trans.png', displayOrder: 1, isActive: true },
-      { id: 'stotras', serviceId: 'stotras', title: 'Divine Stotras', sub: 'Sacred Hymns & Chants', icon: 'BookOpen', url: '/stotras', artwork: '/images/categories/art-stotras-trans.png', displayOrder: 2, isActive: true },
-      { id: 'slokas', serviceId: 'slokas', title: 'Daily Slokas', sub: 'Verses for Meditation', icon: 'Scroll', url: '/slokas', artwork: '/images/categories/art-slokas-trans.png', displayOrder: 3, isActive: true },
-      { id: 'songs', serviceId: 'songs', title: 'Bhajans & Songs', sub: 'Devotional Melodies', icon: 'Music', url: '/songs', artwork: '/images/categories/art-bhajans-trans.png', displayOrder: 4, isActive: true },
-      { id: 'live-streams', serviceId: 'live-streams', title: 'Live Darshan', sub: 'Daily Temple Streams', icon: 'Tv', url: '/live-streams', artwork: '/images/categories/art-live-trans.png', displayOrder: 5, isActive: true },
-      { id: 'panchangam', serviceId: 'panchangam', title: 'Panchangam', sub: 'Auspicious Timings', icon: 'Calendar', url: '/panchangam', artwork: '/images/categories/art-panchangam-trans.png', displayOrder: 6, isActive: true },
-      { id: 'festivals', serviceId: 'festivals', title: 'Temple Festivals', sub: 'Annual Celebrations', icon: 'Sparkles', url: '/festivals', artwork: '/images/categories/art-stotras-trans.png', displayOrder: 7, isActive: true },
-      { id: 'temples', serviceId: 'temples', title: 'Sacred Temples', sub: 'Shrines & Pilgrimages', icon: 'Landmark', url: '/temples', artwork: '/images/categories/art-temples-trans.png', displayOrder: 8, isActive: true },
-      { id: 'donations', serviceId: 'donations', title: 'Annadanam Seva', sub: 'Meal Offering & Seva', icon: 'HeartHandshake', url: '/donations', artwork: '/images/categories/art-donations-trans.png', displayOrder: 9, isActive: true },
-    ];
-
-    // Multi-language localization map
-    const serviceI18n: Record<string, Record<string, { title: string; sub: string }>> = {
-      pooja: {
-        te: { title: 'పూజా విధానం', sub: 'దశలవారీ పూజా పద్ధతులు & నియమాలు' },
-        kn: { title: 'ಪೂಜಾ ವಿಧಾನ', sub: 'ಹಂತ-ಹಂತದ ಪೂಜಾ ವಿಧಾನಗಳು' },
-        ta: { title: 'பூஜை முறை', sub: 'படி படியான பூஜை முறைகள்' },
-        hi: { title: 'पूजा विधान', sub: 'चरण-दर-चरण पूजा पद्धतियां' },
-      },
-      stotras: {
-        te: { title: 'దివ్య స్తోత్రాలు', sub: 'శక్తివంతమైన భక్తి స్తోత్రాలు' },
-        kn: { title: 'ದಿವ್ಯ ಸ್ತೋತ್ರಗಳು', sub: 'ಶಕ್ತಿಶಾಲಿ ಭಕ್ತಿ ಸ್ತೋತ್ರಗಳು' },
-        ta: { title: 'தெய்வீக ஸ்தோத்திரங்கள்', sub: 'சக்திவாய்ந்த பக்தி துதிகள்' },
-        hi: { title: 'दिव्य स्तोत्र', sub: 'पावन भक्ति स्तोत्र' },
-      },
-      slokas: {
-        te: { title: 'నిత్య శ్లోకాలు', sub: 'ధ్యాన శ్లోకాలు & అర్థాలు' },
-        kn: { title: 'ನಿತ್ಯ ಶ್ಲೋಕಗಳು', sub: 'ಧ್ಯಾನ ಶ್ಲೋಕಗಳು & ಅರ್ಥಗಳು' },
-        ta: { title: 'தினசரி ஸ்லோகங்கள்', sub: 'தியான ஸ்லோகங்கள் & பொருள்' },
-        hi: { title: 'दैनिक श्लोक', sub: 'ध्यान श्लोक और अर्थ' },
-      },
-      songs: {
-        te: { title: 'భజనలు & కీర్తనలు', sub: 'భక్తి గీతాలు & హారతులు' },
-        kn: { title: 'ಭಜನೆಗಳು & ಕೀರ್ತನೆಗಳು', sub: 'ಭಕ್ತಿಗೀತೆಗಳು & ಆರತಿಗಳು' },
-        ta: { title: 'பஜனைகள் & பாடல்கள்', sub: 'பக்திப் பாடல்கள் & ஆரத்திகள்' },
-        hi: { title: 'भजन और कीर्तन', sub: 'भक्ति गीत और आरतियां' },
-      },
-      'live-streams': {
-        te: { title: 'ప్రత్యక్ష దర్శనం', sub: 'ఆలయ ప్రత్యక్ష ప్రసారాలు' },
-        kn: { title: 'ನೇರ ದರ್ಶನ', sub: 'ದೇವಾಲಯ ನೇರ ಪ್ರಸಾರಗಳು' },
-        ta: { title: 'நேரலை தரிசனம்', sub: 'கோயில் நேரலை ஒளிபரப்புகள்' },
-        hi: { title: 'लाइव दर्शन', sub: 'मंदिर सीधा प्रसारण' },
-      },
-      panchangam: {
-        te: { title: 'నిత్య పంచాంగం', sub: 'తిథి, నక్షత్రం & శుభ ముహూర్తాలు' },
-        kn: { title: 'ದೈನಂದಿನ ಪಂಚಾಂಗ', sub: 'ತಿಥಿ, ನಕ್ಷತ್ರ & ಶುಭ ಮುಹೂರ್ತ' },
-        ta: { title: 'தினசரி பஞ்சாங்கம்', sub: 'திதி, நட்சத்திரம் & சுப முகூர்த்தம்' },
-        hi: { title: 'दैनिक पंचांग', sub: 'तिथि, नक्षत्र और शुभ मुहूर्त' },
-      },
-      festivals: {
-        te: { title: 'ఆలయ పండుగలు', sub: 'వార్షిక ఉత్సవాలు & విశేషాలు' },
-        kn: { title: 'ದೇವಾಲಯ ಹಬ್ಬಗಳು', sub: 'ವಾರ್ಷಿಕ ಹಬ್ಬಗಳು & ವಿಶೇಷಗಳು' },
-        ta: { title: 'கோயில் திருவிழாக்கள்', sub: 'ஆண்டு விழாக்கள் & சிறப்புகள்' },
-        hi: { title: 'मंदिर उत्सव', sub: 'वार्षिक उत्सव और व्रत' },
-      },
-      temples: {
-        te: { title: 'పవిత్ర దేవాలయాలు', sub: 'పుణ్యక్షేత్రాలు & తీర్థయాత్రలు' },
-        kn: { title: 'ಪವಿತ್ರ ದೇವಾಲಯಗಳು', sub: 'ಪುಣ್ಯಕ್ಷೇತ್ರಗಳು & ಯಾತ್ರೆಗಳು' },
-        ta: { title: 'புனித திருக்கோயில்கள்', sub: 'திருத்தலங்கள் & யாத்திரைகள்' },
-        hi: { title: 'पवित्र मंदिर', sub: 'तीर्थ स्थल और देवालय' },
-      },
-      donations: {
-        te: { title: 'అన్నదాన సేవ', sub: 'నిత్యాన్నదానం & సేవా సహకారం' },
-        kn: { title: 'ಅನ್ನದಾನ ಸೇವೆ', sub: 'ನಿತ್ಯಾನ್ನದಾನ & ಸೇವಾ ಸಹಕಾರ' },
-        ta: { title: 'அன்னதான சேவை', sub: 'அன்னதானம் & சேவைப் பங்களிப்பு' },
-        hi: { title: 'अन्नदान सेवा', sub: 'महाप्रसाद एवं सेवा सहयोग' },
-      },
-    };
-
-    let localizedServices = fallbackServices;
-    if (lang && lang !== 'en' && serviceI18n) {
-      localizedServices = fallbackServices.map((s) => {
-        const trans = serviceI18n[s.serviceId]?.[lang];
-        if (trans) {
-          return {
-            ...s,
-            title: trans.title,
-            sub: trans.sub,
-          };
-        }
-        return s;
-      });
-    }
-
-    let filtered = localizedServices;
-    if (search && search.trim() !== '') {
-      const q = search.trim().toLowerCase();
-      filtered = localizedServices.filter(s => s.title.toLowerCase().includes(q) || s.sub.toLowerCase().includes(q) || s.serviceId.toLowerCase().includes(q));
-    }
-
+    // Strictly fetched from DB: return empty array if no data exists in database
     return {
       success: true,
-      data: filtered,
-      count: filtered.length,
+      data: [],
+      count: 0,
     };
   }
 
@@ -262,26 +169,10 @@ export class CategoriesController {
         });
       }
     } catch (dbErr) {
-      console.warn('[Categories] Database connection unavailable, serving default categories catalog:', dbErr);
+      console.warn('[Categories] Database connection unavailable:', dbErr);
     }
 
-    // Default categories seed catalog so the API NEVER throws HTTP 500
-    const seedCategories = [
-      { id: '1', slug: 'pooja-vidhanam', title: targetLang === 'te' ? 'పూజా విధానం' : 'Pooja Vidhanam', description: 'Complete step-by-step pooja guides and vidhis', isAudio: false, displayOrder: 1 },
-      { id: '2', slug: 'astothrams', title: targetLang === 'te' ? 'అష్టోత్తరాలు' : 'Astothrams', description: '108 Sacred Names & Namavalis for daily worship', isAudio: false, displayOrder: 2 },
-      { id: '3', slug: 'slokas', title: targetLang === 'te' ? 'శ్లోకాలు' : 'Slokas', description: 'Divine verses and mantras for peace and prosperity', isAudio: false, displayOrder: 3 },
-      { id: '4', slug: 'bhajans', title: targetLang === 'te' ? 'భజనలు & కీర్తనలు' : 'Bhajans & Songs', description: 'Soul-stirring devotional songs and keerthanas', isAudio: true, displayOrder: 4 },
-      { id: '5', slug: 'vrata-kalpam', title: targetLang === 'te' ? 'వ్రత కల్పం' : 'Vrata Kalpam', description: 'Ayyappa Mandala Deeksha Vrata rules and rituals', isAudio: false, displayOrder: 5 },
-      { id: '6', slug: 'harivarasanam', title: targetLang === 'te' ? 'హరివరాసనం' : 'Harivarasanam', description: 'Sacred lullaby sung at Sabarimala temple closing', isAudio: true, displayOrder: 6 },
-      { id: '7', slug: 'sahasranama', title: targetLang === 'te' ? 'సహస్రనామావళి' : 'Sahasranamavali', description: '1008 Holy names of Lord Ayyappa', isAudio: false, displayOrder: 7 },
-      { id: '8', slug: 'kavacham', title: targetLang === 'te' ? 'శ్రీ అయ్యప్ప కవచం' : 'Ayyappa Kavacham', description: 'Protective divine armour chant', isAudio: false, displayOrder: 8 },
-    ];
-
-    if (search && search.trim() !== '') {
-      const q = search.trim().toLowerCase();
-      return seedCategories.filter(c => c.title.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q));
-    }
-    return seedCategories;
+    return [];
   }
 
   // 1b. Stotras Public API List (filtered by published, parent stotras/slogans, Telugu first)
@@ -697,305 +588,176 @@ export class CategoriesController {
         }
       });
 
-      // If not in Prisma DB yet, fallback to backup_ayyappa_audit.json
-      let auditCatMatch: any = null;
+      if (!category) {
+        return {
+          success: false,
+          message: `Subcategory "${slugOrId}" not found in database.`
+        };
+      }
+
+      const preferred = category.translations?.find((t: any) => t.language?.code === targetLang) || category.translations?.[0];
+      const teTranslation = category.translations?.find((t: any) => t.language?.code === 'te');
+      const enTranslation = category.translations?.find((t: any) => t.language?.code === 'en');
+      const parentPref = category.parent?.translations?.find((t: any) => t.language?.code === targetLang) || category.parent?.translations?.[0];
+      const pSlug = category.parent?.slug || 'pooja';
+
+      const rawSlug = category.slug;
+      const titleFormatted = rawSlug.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+
+      const finalTitle = preferred?.title || titleFormatted;
+      const finalTeTitle = teTranslation?.title || finalTitle;
+      const finalEnTitle = enTranslation?.title || titleFormatted;
+
+      const deityResolved = resolveCategoryDeity(rawSlug, finalTitle);
+
+      // Fetch custom image or assign dedicated artwork from DB app_settings
+      let customImages: Record<string, string> = {};
       try {
-        const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
-        if (fs.existsSync(auditPath)) {
-          const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
-          auditCatMatch = audit.categories?.find((c: any) =>
-            c.slug === slugOrId ||
-            c.slug === lookupSlug ||
-            (slugOrId.includes('nithya') && c.slug === 'nithyapooja') ||
-            (isNum && c.id === Number(slugOrId))
-          );
-        }
+        const imgSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+        if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
       } catch (_) {}
 
-      if (category || auditCatMatch) {
-        const preferred = category?.translations?.find((t: any) => t.language?.code === targetLang) || category?.translations?.[0];
-        const teTranslation = category?.translations?.find((t: any) => t.language?.code === 'te');
-        const enTranslation = category?.translations?.find((t: any) => t.language?.code === 'en');
-        const parentPref = category?.parent?.translations?.find((t: any) => t.language?.code === targetLang) || category?.parent?.translations?.[0];
-        const pSlug = category?.parent?.slug || 'pooja';
+      let resolvedImage = customImages[String(category.id)] || customImages[rawSlug];
+      if (!resolvedImage) {
+        const s = rawSlug.toLowerCase();
+        if (s.includes('shiva-linga') || s.includes('simple') || s.includes('nithya')) resolvedImage = '/images/pooja/pooja-card-1-ref.png';
+        else if (s.includes('subramanya') || s.includes('murugan')) resolvedImage = '/images/pooja/pooja-card-2-ref.png';
+        else if (s.includes('mantrapushpam') || s.includes('sharanu') || s.includes('slogans')) resolvedImage = '/images/pooja/pooja-card-3-ref.png';
+        else if (s.includes('harathi') || s.includes('deepa')) resolvedImage = '/images/pooja/pooja-card-4-ref.png';
+        else if (s.includes('ganapa') || s.includes('vignesh') || s.includes('gomatha')) resolvedImage = '/images/pooja/pooja-card-5-ref.png';
+        else if (s.includes('abhisheka') || s.includes('koodalmanikya') || s.includes('bilva')) resolvedImage = '/images/pooja/pooja-card-6-ref.png';
+        else if (deityResolved.deityId === 'ayyappa') resolvedImage = '/images/pooja/card-banner-ayyappa-hd.png';
+        else if (deityResolved.deityId === 'ganesha') resolvedImage = '/images/pooja/card-banner-ganapathi-hd.png';
+        else if (deityResolved.deityId === 'devi') resolvedImage = '/images/pooja/card-banner-lakshmi-hd.png';
+        else resolvedImage = '/images/pooja/pooja-card-1-ref.png';
+      }
 
-        const rawSlug = category?.slug || auditCatMatch?.slug || slugOrId;
-        const titleFormatted = rawSlug.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+      // Full scripture text (contains authentic slokas & mantras from DB)
+      let fullScriptureText = preferred?.description || '';
 
-        let auditLangId = targetLang === 'te' ? 1 : targetLang === 'kn' ? 2 : targetLang === 'ta' ? 4 : targetLang === 'hi' ? 5 : 3;
-        const auditTrans = auditCatMatch?.translations?.find((t: any) => t.languageId === auditLangId) || auditCatMatch?.translations?.[0];
+      // Extract instruction note if present
+      let instructionNote = '';
+      if (fullScriptureText.includes('సూచన :') || fullScriptureText.includes('సూచన:')) {
+        const parts = fullScriptureText.split(/\n\s*\n/);
+        instructionNote = parts[0].replace(/^సూచన\s*:\s*/, '').trim();
+      }
 
-        const finalTitle = preferred?.title || auditTrans?.title || titleFormatted;
-        const finalTeTitle = teTranslation?.title || (auditCatMatch?.translations?.find((t: any) => t.languageId === 1)?.title) || finalTitle;
-        const finalEnTitle = enTranslation?.title || (auditCatMatch?.translations?.find((t: any) => t.languageId === 3)?.title) || titleFormatted;
+      // Process procedure steps and mantras strictly from DB devotionalContents
+      const procedure: Array<{ step: number; title: string; desc: string; mantra?: string }> = [];
+      const mantras: Array<{ title: string; script: string; transliteration: string; meaning: string }> = [];
 
-        const deityResolved = resolveCategoryDeity(rawSlug, finalTitle);
-
-        // Fetch custom image or assign dedicated artwork
-        let customImages: Record<string, string> = {};
-        try {
-          const imgSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
-          if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
-        } catch (_) {}
-
-        let resolvedImage = customImages[String(category?.id)] || customImages[rawSlug];
-        if (!resolvedImage) {
-          const s = rawSlug.toLowerCase();
-          if (s.includes('shiva-linga') || s.includes('simple') || s.includes('nithya')) resolvedImage = '/images/pooja/pooja-card-1-ref.png';
-          else if (s.includes('subramanya') || s.includes('murugan')) resolvedImage = '/images/pooja/pooja-card-2-ref.png';
-          else if (s.includes('mantrapushpam') || s.includes('sharanu') || s.includes('slogans')) resolvedImage = '/images/pooja/pooja-card-3-ref.png';
-          else if (s.includes('harathi') || s.includes('deepa')) resolvedImage = '/images/pooja/pooja-card-4-ref.png';
-          else if (s.includes('ganapa') || s.includes('vignesh') || s.includes('gomatha')) resolvedImage = '/images/pooja/pooja-card-5-ref.png';
-          else if (s.includes('abhisheka') || s.includes('koodalmanikya') || s.includes('bilva')) resolvedImage = '/images/pooja/pooja-card-6-ref.png';
-          else if (deityResolved.deityId === 'ayyappa') resolvedImage = '/images/pooja/card-banner-ayyappa-hd.png';
-          else if (deityResolved.deityId === 'ganesha') resolvedImage = '/images/pooja/card-banner-ganapathi-hd.png';
-          else if (deityResolved.deityId === 'devi') resolvedImage = '/images/pooja/card-banner-lakshmi-hd.png';
-          else resolvedImage = '/images/pooja/pooja-card-1-ref.png';
-        }
-
-        // Full scripture text (contains the complete, authentic Telugu slokas & mantras)
-        let fullScriptureText = preferred?.description || auditTrans?.description || '';
-
-        // Extract instruction note if present
-        let instructionNote = '';
-        if (fullScriptureText.includes('సూచన :') || fullScriptureText.includes('సూచన:')) {
-          const parts = fullScriptureText.split(/\n\s*\n/);
-          instructionNote = parts[0].replace(/^సూచన\s*:\s*/, '').trim();
-        }
-
-        // Process procedure steps and mantras
-        const procedure: Array<{ step: number; title: string; desc: string; mantra?: string }> = [];
-        const mantras: Array<{ title: string; script: string; transliteration: string; meaning: string }> = [];
-
-        if (category?.devotionalContents && category.devotionalContents.length > 0) {
-          category.devotionalContents.forEach((dc: any) => {
-            if (dc.sacredText) {
-              const sections = dc.sacredText.split(/(?=\[\s*[^\]]+\s*\])/g).filter(Boolean);
-              if (sections.length > 1) {
-                sections.forEach((sec: string, sIdx: number) => {
-                  const headerMatch = sec.match(/\[\s*([^\]]+)\s*\]/);
-                  const secTitle = headerMatch ? headerMatch[1].trim() : `Step ${sIdx + 1}`;
-                  const secBody = sec.replace(/\[\s*[^\]]+\s*\]/, '').trim();
-                  procedure.push({
-                    step: procedure.length + 1,
-                    title: secTitle,
-                    desc: `Recite and perform with devotion:`,
-                    mantra: secBody
-                  });
-                  mantras.push({
-                    title: secTitle,
-                    script: secBody,
-                    transliteration: '',
-                    meaning: dc.meaning || 'Sacred verse with divine blessing.'
-                  });
-                });
-              } else {
+      if (category.devotionalContents && category.devotionalContents.length > 0) {
+        category.devotionalContents.forEach((dc: any) => {
+          if (dc.sacredText) {
+            const sections = dc.sacredText.split(/(?=\[\s*[^\]]+\s*\])/g).filter(Boolean);
+            if (sections.length > 1) {
+              sections.forEach((sec: string, sIdx: number) => {
+                const headerMatch = sec.match(/\[\s*([^\]]+)\s*\]/);
+                const secTitle = headerMatch ? headerMatch[1].trim() : `Step ${sIdx + 1}`;
+                const secBody = sec.replace(/\[\s*[^\]]+\s*\]/, '').trim();
                 procedure.push({
                   step: procedure.length + 1,
-                  title: dc.title || `Sacred Chanting Step`,
-                  desc: dc.meaning || `Chant the divine mantras with pure heart.`,
-                  mantra: dc.sacredText
+                  title: secTitle,
+                  desc: `Recite and perform with devotion:`,
+                  mantra: secBody
                 });
                 mantras.push({
-                  title: dc.title || `Maha Mantra`,
-                  script: dc.sacredText,
+                  title: secTitle,
+                  script: secBody,
                   transliteration: '',
-                  meaning: dc.meaning || 'Sacred verse.'
+                  meaning: dc.meaning || 'Sacred verse with divine blessing.'
                 });
-              }
-            }
-          });
-        }
-
-        // Default procedures if none parsed
-        if (procedure.length === 0) {
-          procedure.push(
-            { step: 1, title: 'Shuddi & Deeparadhana', desc: 'Bathe with cold water, apply Vibhuti and Chandanam, light deepam with pure sesame or ghee.', mantra: 'ఓం దీపజ్యోతిః పరబ్రహ్మ దీపజ్యోతిర్జనార్దనః | దీపో హరతు మే పాపం సంధ్యాదీప నమోస్తుతే ||' },
-            { step: 2, title: 'Prarthana & Sankalpam', desc: 'Make the solemn sankalpam for spiritual purity, family well-being, and divine protection.', mantra: 'శుక్లాంబరధరం విష్ణుం శశివర్ణం చతుర్భుజమ్ | ప్రసన్నవదనం ధ్యాయేత్ సర్వవిఘ్నోపశాంతయే ||' },
-            { step: 3, title: 'Sacred Pooja & Samarpanam', desc: 'Perform the holy offerings, flowers, naivedyam, and conclude with mangala harathi.', mantra: 'స్వామియే శరణం అయ్యప్ప | శ్రీ గురుభ్యో నమః' }
-          );
-        }
-
-        if (mantras.length === 0) {
-          mantras.push({
-            title: `${finalTitle} Sacred Sloka`,
-            script: 'శుక్లాంబరధరం విష్ణుం శశివర్ణం చతుర్భుజమ్ |\nప్రసన్నవదనం ధ్యాయేత్ సర్వవిఘ్నోపశాంతయే ||\n\nసరస్వతీ నమస్తుభ్యం వరదే కామరూపిణీ |\nవిద్యారంభం కరిష్యామి సిద్ధిర్భవతు మే సదా ||',
-            transliteration: 'Suklambaradharam Vishnum Sasivarnam Chaturbhujam | Prasannavadanam Dhyayet Sarvavighnopasantaye ||',
-            meaning: preferred?.description || 'Divine prayers dedicated to your chosen deity.'
-          });
-        }
-
-        // Resolve child subcategories (for deities with multiple types, e.g. Mahaganapathi 4 types)
-        let children: any[] = [];
-        const catId = category?.id || auditCatMatch?.id;
-
-        try {
-          if (catId) {
-            const dbChildren = await this.prisma.contentCategory.findMany({
-              where: { parentId: catId },
-              include: { translations: { include: { language: true } } },
-              orderBy: { displayOrder: 'asc' }
-            });
-            if (dbChildren && dbChildren.length > 0) {
-              children = dbChildren.map((ch: any) => {
-                const chPref = ch.translations?.find((t: any) => t.language?.code === targetLang) || ch.translations?.[0];
-                return {
-                  id: String(ch.id),
-                  slug: ch.slug,
-                  title: chPref?.title || ch.slug,
-                  imageUrl: '/images/deities/card_ganesha.jpg'
-                };
+              });
+            } else {
+              procedure.push({
+                step: procedure.length + 1,
+                title: dc.title || `Sacred Chanting Step`,
+                desc: dc.meaning || `Chant the divine mantras with pure heart.`,
+                mantra: dc.sacredText
+              });
+              mantras.push({
+                title: dc.title || `Maha Mantra`,
+                script: dc.sacredText,
+                transliteration: '',
+                meaning: dc.meaning || 'Sacred verse.'
               });
             }
           }
-        } catch (_) {}
-
-        if (children.length === 0 && auditCatMatch) {
-          try {
-            const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
-            if (fs.existsSync(auditPath)) {
-              const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
-              const auditChildren = audit.categories?.filter((c: any) => c.parentId === auditCatMatch.id || (auditCatMatch.id === 6 && c.parentId === 6));
-              if (auditChildren && auditChildren.length > 0) {
-                children = auditChildren.map((ch: any) => {
-                  const chTrans = ch.translations?.find((t: any) => t.languageId === auditLangId) || ch.translations?.[0];
-                  return {
-                    id: String(ch.id),
-                    slug: ch.slug,
-                    title: chTrans?.title || ch.slug,
-                    imageUrl: '/images/deities/card_ganesha.jpg'
-                  };
-                });
-              }
-            }
-          } catch (_) {}
-        }
-
-        if (children.length === 0 && (rawSlug.includes('ganapa') || rawSlug.includes('vignesh') || rawSlug === 'ganapathi-pooja')) {
-          try {
-            const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
-            if (fs.existsSync(auditPath)) {
-              const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
-              const auditChildren = audit.categories?.filter((c: any) => c.parentId === 6);
-              if (auditChildren && auditChildren.length > 0) {
-                children = auditChildren.map((ch: any) => {
-                  const chTrans = ch.translations?.find((t: any) => t.languageId === auditLangId) || ch.translations?.[0];
-                  return {
-                    id: String(ch.id),
-                    slug: ch.slug,
-                    title: chTrans?.title || ch.slug,
-                    imageUrl: '/images/deities/card_ganesha.jpg'
-                  };
-                });
-              }
-            }
-          } catch (_) {}
-        }
-
-        if (children.length === 0 && (rawSlug.includes('subramanya') || rawSlug.includes('subrahmanya') || rawSlug.includes('murugan') || catId === 7)) {
-          try {
-            const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
-            if (fs.existsSync(auditPath)) {
-              const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
-              const auditChildren = audit.categories?.filter((c: any) => c.parentId === 7);
-              if (auditChildren && auditChildren.length > 0) {
-                children = auditChildren.map((ch: any) => {
-                  const chTrans = ch.translations?.find((t: any) => t.languageId === auditLangId) || ch.translations?.[0];
-                  return {
-                    id: String(ch.id),
-                    slug: ch.slug,
-                    title: chTrans?.title || ch.slug,
-                    imageUrl: '/images/deities/card_murugan.jpg'
-                  };
-                });
-              }
-            }
-          } catch (_) {}
-        }
-
-        if (children.length === 0 && (rawSlug.includes('ashtottaramulu') || rawSlug.includes('ashtothram') || catId === 21)) {
-          try {
-            const auditPath = path.join(process.cwd(), 'backup_ayyappa_audit.json');
-            if (fs.existsSync(auditPath)) {
-              const audit = JSON.parse(fs.readFileSync(auditPath, 'utf8'));
-              const auditChildren = audit.categories?.filter((c: any) => c.parentId === 21);
-              if (auditChildren && auditChildren.length > 0) {
-                children = auditChildren.map((ch: any) => {
-                  const chTrans = ch.translations?.find((t: any) => t.languageId === auditLangId) || ch.translations?.[0];
-                  const s = ch.slug.toLowerCase();
-                  let img = '/images/deities/card_ayyappa.jpg';
-                  if (s.includes('vignesh') || s.includes('ganapa')) img = '/images/deities/card_ganesha.jpg';
-                  else if (s.includes('subrahmanya') || s.includes('murugan')) img = '/images/deities/card_murugan.jpg';
-                  else if (s.includes('shiva') || s.includes('dakshinamurthy') || s.includes('veerabhadra') || s.includes('dattatreya') || s.includes('raghavendra')) img = '/images/deities/card_shiva.jpg';
-                  else if (s.includes('vishnu') || s.includes('venkateshwara') || s.includes('vishvaksena')) img = '/images/deities/card_vishnu.jpg';
-                  else if (s.includes('gomatha')) img = '/images/pooja/pooja-card-5-ref.png';
-                  else if (s.includes('lalitha') || s.includes('lakshmi') || s.includes('saraswathi') || s.includes('durga') || s.includes('vasavi')) img = '/images/deities/card_devi.jpg';
-                  else if (s.includes('anjaneya') || s.includes('hanuman')) img = '/images/deities/hanuman.jpg';
-
-                  return {
-                    id: String(ch.id),
-                    slug: ch.slug,
-                    title: chTrans?.title || ch.slug,
-                    imageUrl: img
-                  };
-                });
-              }
-            }
-          } catch (_) {}
-        }
-
-        return {
-          success: true,
-          data: {
-            id: rawSlug,
-            rawId: category?.id || auditCatMatch?.id,
-            slug: rawSlug,
-            category: pSlug,
-            parentSlug: pSlug,
-            parentTitle: parentPref?.title || pSlug,
-            title: finalTitle,
-            titleTelugu: finalTeTitle,
-            titleEnglish: finalEnTitle,
-            subtitle: preferred?.description?.slice(0, 150) || `Complete sacred vidhanam, procedure and verses for ${finalTitle}.`,
-            overview: preferred?.description?.slice(0, 300) || `Sacred worship procedure and divine blessings for ${finalTitle}.`,
-            fullScriptureText,
-            instructionNote,
-            heroImage: resolvedImage,
-            badge: 'Daily Devotion',
-            badgeClass: 'badge-daily',
-            duration: '15 mins',
-            difficulty: 'All Devotees',
-            bestTime: 'Morning (Pratah Kalam) or Evening (Sandhya)',
-            deityId: deityResolved.deityId,
-            deityName: deityResolved.deityName,
-            deityTelugu: deityResolved.deityId === 'ayyappa' ? 'శ్రీ అయ్యప్ప స్వామి' : deityResolved.deityId === 'shiva' ? 'పరమశివుడు' : deityResolved.deityId === 'ganesha' ? 'శ్రీ మహాగణపతి' : deityResolved.deityId === 'devi' ? 'శ్రీ దేవి అమ్మవారు' : deityResolved.deityId === 'murugan' ? 'శ్రీ సుబ్రహ్మణ్యేశ్వర స్వామి' : deityResolved.deityId === 'venkateswara' ? 'శ్రీ వేంకటేశ్వర స్వామి' : 'సర్వ దేవతలు',
-            children,
-            procedure,
-            materials: [
-              { name: 'Pure Cow Ghee / Sesame Oil for Deepam', qty: '100 ml', icon: 'Flame' },
-              { name: 'Fresh Cotton Wicks (Vattulu)', qty: '1 Packet', icon: 'Sparkles' },
-              { name: 'Pure Vibhuti, Kumkum & Sandalwood (Gandham)', qty: '50g each', icon: 'Flower2' },
-              { name: 'Fresh Fragrant Flowers & Thulasi / Bilva Leaves', qty: '1 Basket', icon: 'Flower2' },
-              { name: 'Raw Coconuts & Betel Leaves with Supari', qty: '2 Coconuts, 5 Betel Leaves', icon: 'Layers' },
-              { name: 'Raw Rice with Turmeric (Akshintalu)', qty: '1 Bowl', icon: 'Sparkles' },
-              { name: 'Fresh Fruits or Naivedyam Prasad', qty: '1 Bowl', icon: 'Soup' },
-              { name: 'Pure Camphor (Karpooram) & Dhoop Sticks', qty: '1 Box', icon: 'Flame' }
-            ],
-            mantras,
-            benefits: [
-              'Brings profound peace of mind and destroys negative vibrations.',
-              'Instills spiritual strength, health, discipline and family harmony.',
-              'Neutralizes planetary doshams and brings auspicious beginnings.',
-              'Bestows benevolent divine protection of the presiding deity.'
-            ],
-            audioTrack: {
-              title: `${finalTitle} Devotional Audio`,
-              duration: '05:30',
-              ragam: 'Madhyamavathi'
-            }
-          }
-        };
+        });
       }
+
+      // Resolve child subcategories strictly from database
+      let children: any[] = [];
+      try {
+        const dbChildren = await this.prisma.contentCategory.findMany({
+          where: { parentId: category.id, isArchived: false },
+          include: { translations: { include: { language: true } } },
+          orderBy: { displayOrder: 'asc' }
+        });
+        if (dbChildren && dbChildren.length > 0) {
+          children = dbChildren.map((ch: any) => {
+            const chPref = ch.translations?.find((t: any) => t.language?.code === targetLang) || ch.translations?.[0];
+            return {
+              id: String(ch.id),
+              slug: ch.slug,
+              title: chPref?.title || ch.slug,
+              imageUrl: customImages[String(ch.id)] || customImages[ch.slug] || resolvedImage
+            };
+          });
+        }
+      } catch (_) {}
+
+      return {
+        success: true,
+        data: {
+          id: rawSlug,
+          rawId: category.id,
+          slug: rawSlug,
+          category: pSlug,
+          parentSlug: pSlug,
+          parentTitle: parentPref?.title || pSlug,
+          title: finalTitle,
+          titleTelugu: finalTeTitle,
+          titleEnglish: finalEnTitle,
+          subtitle: preferred?.description?.slice(0, 150) || `Complete sacred vidhanam, procedure and verses for ${finalTitle}.`,
+          overview: preferred?.description?.slice(0, 300) || `Sacred worship procedure and divine blessings for ${finalTitle}.`,
+          fullScriptureText,
+          instructionNote,
+          heroImage: resolvedImage,
+          badge: 'Daily Devotion',
+          badgeClass: 'badge-daily',
+          duration: '15 mins',
+          difficulty: 'All Devotees',
+          bestTime: 'Morning (Pratah Kalam) or Evening (Sandhya)',
+          deityId: deityResolved.deityId,
+          deityName: deityResolved.deityName,
+          deityTelugu: deityResolved.deityId === 'ayyappa' ? 'శ్రీ అయ్యప్ప స్వామి' : deityResolved.deityId === 'shiva' ? 'పరమశివుడు' : deityResolved.deityId === 'ganesha' ? 'శ్రీ మహాగణపతి' : deityResolved.deityId === 'devi' ? 'శ్రీ దేవి అమ్మవారు' : deityResolved.deityId === 'murugan' ? 'శ్రీ సుబ్రహ్మణ్యేశ్వర స్వామి' : deityResolved.deityId === 'venkateswara' ? 'శ్రీ వేంకటేశ్వర స్వామి' : 'సర్వ దేవతలు',
+          children,
+          procedure,
+          materials: [
+            { name: 'Pure Cow Ghee / Sesame Oil for Deepam', qty: '100 ml', icon: 'Flame' },
+            { name: 'Fresh Cotton Wicks (Vattulu)', qty: '1 Packet', icon: 'Sparkles' },
+            { name: 'Pure Vibhuti, Kumkum & Sandalwood (Gandham)', qty: '50g each', icon: 'Flower2' },
+            { name: 'Fresh Fragrant Flowers & Thulasi / Bilva Leaves', qty: '1 Basket', icon: 'Flower2' },
+            { name: 'Raw Coconuts & Betel Leaves with Supari', qty: '2 Coconuts, 5 Betel Leaves', icon: 'Layers' },
+            { name: 'Raw Rice with Turmeric (Akshintalu)', qty: '1 Bowl', icon: 'Sparkles' },
+            { name: 'Fresh Fruits or Naivedyam Prasad', qty: '1 Bowl', icon: 'Soup' },
+            { name: 'Pure Camphor (Karpooram) & Dhoop Sticks', qty: '1 Box', icon: 'Flame' }
+          ],
+          mantras,
+          benefits: [
+            'Brings profound peace of mind and destroys negative vibrations.',
+            'Instills spiritual strength, health, discipline and family harmony.',
+            'Neutralizes planetary doshams and brings auspicious beginnings.',
+            'Bestows benevolent divine protection of the presiding deity.'
+          ],
+          audioTrack: {
+            title: `${finalTitle} Devotional Audio`,
+            duration: '05:30',
+            ragam: 'Madhyamavathi'
+          }
+        }
+      };
     } catch (err) {
       console.warn('[Categories] getSubcategoryDetail error:', err);
     }
@@ -1143,17 +905,20 @@ export class CategoriesController {
 
   @Get('deities')
   async getDeitiesList(@Query('lang') lang = 'en') {
-    const list = [
-      { id: 'ayyappa', slug: 'lord-ayyappa', name: 'Lord Ayyappa', image: '/images/deities/lord_ayyappa.png', isActive: true, sortOrder: 1 },
-      { id: 'shiva', slug: 'lord-shiva', name: 'Lord Shiva', image: '/images/deities/lord_shiva.png', isActive: true, sortOrder: 2 },
-      { id: 'venkateswara', slug: 'lord-venkateswara', name: 'Lord Venkateswara', image: '/images/deities/lord_vishnu.png', isActive: true, sortOrder: 3 },
-      { id: 'ganesha', slug: 'lord-ganesha', name: 'Lord Ganesha', image: '/images/deities/lord_ganesha.png', isActive: true, sortOrder: 4 },
-      { id: 'devi', slug: 'goddess-lakshmi-durga', name: 'Goddess Lakshmi / Durga', image: '/images/deities/goddess_devi.png', isActive: true, sortOrder: 5 },
-      { id: 'hanuman', slug: 'lord-hanuman', name: 'Lord Hanuman', image: '/images/deities/hanuman.jpg', isActive: true, sortOrder: 6 },
-      { id: 'murugan', slug: 'lord-murugan', name: 'Lord Murugan', image: '/images/deities/lord_murugan.png', isActive: true, sortOrder: 7 },
-      { id: 'all', slug: 'all-deities', name: 'All Deities', image: '/images/deities/saranam_deity_emblem.png', isActive: true, sortOrder: 8 },
-    ];
-    return { success: true, data: list };
+    try {
+      const setting = await this.prisma.appSetting.findUnique({
+        where: { key: 'deities' }
+      });
+      if (setting && setting.value) {
+        const parsed = JSON.parse(setting.value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return { success: true, data: parsed };
+        }
+      }
+    } catch (err) {
+      console.warn('[Categories] getDeitiesList DB error:', err);
+    }
+    return { success: true, data: [] };
   }
 
   @Get(':id')
@@ -1254,67 +1019,6 @@ export class CategoriesController {
       };
     }
 
-    // Dynamic fallback so detail never returns 404 or empty
-    const seedCategories = [
-      { id: '1', slug: 'pooja-vidhanam', title: 'Pooja Vidhanam', description: 'Complete step-by-step pooja guides and vidhis', isAudio: false, isSubcategory: false },
-      { id: '2', slug: 'astothrams', title: 'Astothrams', description: '108 Sacred Names & Namavalis for daily worship', isAudio: false, isSubcategory: false },
-      { id: '3', slug: 'slokas', title: 'Slokas', description: 'Divine verses and mantras for peace and prosperity', isAudio: false, isSubcategory: false },
-      { id: '4', slug: 'bhajans', title: 'Bhajans & Songs', description: 'Soul-stirring devotional songs and keerthanas', isAudio: true, isSubcategory: false },
-    ];
-    const catMatch = seedCategories.find(c => c.id === id || c.slug === id);
-    if (catMatch) {
-      return {
-        id: catMatch.id,
-        slug: catMatch.slug,
-        title: catMatch.title,
-        description: catMatch.description,
-        isAudio: catMatch.isAudio,
-        displayOrder: 1,
-        parentId: null,
-        parentSlug: null,
-        parentTitle: null,
-        isSubcategory: false,
-        imageUrl: null,
-        translations: [
-          { code: 'en', name: 'English', title: catMatch.title, description: catMatch.description },
-          { code: 'te', name: 'Telugu', title: catMatch.title, description: catMatch.description }
-        ],
-        contents: [],
-        subcategories: []
-      };
-    }
-
-    // Subcategory fallback
-    const titleFormatted = id.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    return {
-      id: String(id),
-      slug: id,
-      title: titleFormatted,
-      description: `Complete sacred guide, procedure and mantras for ${titleFormatted}.`,
-      isAudio: false,
-      displayOrder: 1,
-      parentId: 1,
-      parentSlug: 'pooja',
-      parentTitle: 'Pooja Vidhanam',
-      isSubcategory: true,
-      imageUrl: `/images/subcategories/pooja/${id}.webp`,
-      translations: [
-        { code: 'en', name: 'English', title: titleFormatted, description: `Complete sacred guide and mantras for ${titleFormatted}.` },
-        { code: 'te', name: 'Telugu', title: titleFormatted, description: `సంపూర్ణ పూజా విధానం మరియు మంత్రములు.` },
-        { code: 'kn', name: 'Kannada', title: titleFormatted, description: `ಸಂಪೂರ್ಣ ಪೂಜಾ ವಿಧಾನ ಮತ್ತು ಮಂತ್ರಗಳು.` },
-        { code: 'ta', name: 'Tamil', title: titleFormatted, description: `முழுமையான பூஜை முறை மற்றும் மந்திரங்கள்.` },
-        { code: 'hi', name: 'Hindi', title: titleFormatted, description: `सम्पूर्ण पूजा विधान एवं मन्त्र।` }
-      ],
-      contents: [
-        {
-          id: 1,
-          title: `${titleFormatted} Sacred Chanting & Mantras`,
-          slug: `${id}-chanting`,
-          sacredText: 'ఓం శ్రీ స్వామియే శరణం అయ్యప్ప | ఓం నమో భగవతే వాసుదేవాయ ||',
-          meaning: 'Step-by-step sacred procedure, invocation mantras, offering sequence, and prayer rules.'
-        }
-      ],
-      subcategories: []
-    };
+    throw new NotFoundException(`Category with ID or slug "${id}" not found in database.`);
   }
 }
