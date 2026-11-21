@@ -701,11 +701,47 @@ export class CategoriesController {
               id: String(ch.id),
               slug: ch.slug,
               title: chPref?.title || ch.slug,
+              description: chPref?.description || '',
               imageUrl: customImages[String(ch.id)] || customImages[ch.slug] || resolvedImage
             };
           });
         }
       } catch (_) {}
+
+      // If no child categories, check devotionalContents for types
+      if (children.length === 0 && category.devotionalContents && category.devotionalContents.length > 0) {
+        children = category.devotionalContents.map((dc: any, idx: number) => ({
+          id: String(dc.id),
+          slug: dc.slug || String(dc.id),
+          title: dc.title || `Type ${idx + 1}`,
+          description: dc.meaning || '',
+          imageUrl: dc.audioUrl || resolvedImage
+        }));
+      }
+
+      // If category is Sri Maha Ganapathi Pooja and children still empty, look up standard 4 types from DB
+      if (children.length === 0 && (rawSlug === 'sri-maha-ganapathi-pooja' || rawSlug === 'ganapathi-pooja' || category.id === 229)) {
+        try {
+          const ganeshaTypes = await this.prisma.devotionalContent.findMany({
+            where: {
+              OR: [
+                { categoryId: category.id },
+                { slug: { in: ['sri-vighneshwara-pooja', 'sri-ganesha-pancharatnam', 'sri-ekadanta-stotram', 'sri-sankashtanashana-ganesha-stotram'] } }
+              ]
+            },
+            orderBy: { displayOrder: 'asc' }
+          });
+          if (ganeshaTypes && ganeshaTypes.length > 0) {
+            children = ganeshaTypes.map((gt: any) => ({
+              id: String(gt.id),
+              slug: gt.slug,
+              title: gt.title,
+              description: gt.meaning || '',
+              imageUrl: resolvedImage
+            }));
+          }
+        } catch (_) {}
+      }
 
       return {
         success: true,

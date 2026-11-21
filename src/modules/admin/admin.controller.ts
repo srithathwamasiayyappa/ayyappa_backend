@@ -38,6 +38,52 @@ export interface ActiveSession {
   createdAt: number;
   expiresAt: number;
 }
+
+const DEFAULT_CATEGORY_ARTWORKS: Record<string, string> = {
+  pooja: '/images/categories/art-pooja-trans.png',
+  'pooja-vidhanam': '/images/categories/art-pooja-trans.png',
+  'poojalu-vrathaalu': '/images/categories/art-pooja-trans.png',
+  stotras: '/images/categories/art-stotras-trans.png',
+  'divine-stotras': '/images/categories/art-stotras-trans.png',
+  'slogans-of-sri-ayyappa-swami': '/images/categories/art-stotras-trans.png',
+  slokas: '/images/categories/art-slokas-trans.png',
+  'daily-slokas': '/images/categories/art-slokas-trans.png',
+  songs: '/images/categories/art-bhajans-trans.png',
+  bhajans: '/images/categories/art-bhajans-trans.png',
+  'bhajana-keerthanalu': '/images/categories/art-bhajans-trans.png',
+  live: '/images/categories/art-live-trans.png',
+  'live-streams': '/images/categories/art-live-trans.png',
+  panchangam: '/images/categories/art-panchangam-trans.png',
+  festivals: '/images/categories/art-stotras-trans.png',
+  temples: '/images/categories/art-temples-trans.png',
+  donations: '/images/categories/art-donations-trans.png',
+  food: '/images/categories/art-food-trans.png',
+};
+
+function resolveCategoryCardArtwork(slug: string = '', title: string = '', parentSlug: string = '', displayOrder: number = 0): string {
+  const s = `${slug} ${title}`.toLowerCase();
+  if (s.includes('shiva-linga') || s.includes('simple') || s.includes('nithyapooja')) return '/images/pooja/pooja-card-1-ref.png';
+  if (s.includes('subramanya') || s.includes('murugan') || s.includes('kartikeya')) return '/images/pooja/pooja-card-2-ref.png';
+  if (s.includes('mantrapushpam') || s.includes('sharanu') || s.includes('slogans')) return '/images/pooja/pooja-card-3-ref.png';
+  if (s.includes('harathi') || s.includes('deepa') || s.includes('mangala')) return '/images/pooja/pooja-card-4-ref.png';
+  if (s.includes('ganapa') || s.includes('vignesh') || s.includes('gomatha')) return '/images/pooja/pooja-card-5-ref.png';
+  if (s.includes('abhisheka') || s.includes('koodalmanikya') || s.includes('bilva') || s.includes('rudra')) return '/images/pooja/pooja-card-6-ref.png';
+  if (/ayyap|sastha|padi|irumudi|maaladharan/.test(s)) return '/images/pooja/card-banner-ayyappa-hd.png';
+  if (/ganesh|vinayak|chathurthi/.test(s)) return '/images/pooja/card-banner-ganapathi-hd.png';
+  if (/devi|durga|lakshmi|suktha|lalitha|varalakshmi/.test(s)) return '/images/pooja/card-banner-lakshmi-hd.png';
+  if (/venkat|vishnu|satyanarayana|srinivasa/.test(s)) return '/images/pooja/pooja-card-3-ref.png';
+  if (/hanuman|anjaneya/.test(s)) return '/images/pooja/pooja-card-4-ref.png';
+
+  const cardRefs = [
+    '/images/pooja/pooja-card-1-ref.png',
+    '/images/pooja/pooja-card-2-ref.png',
+    '/images/pooja/pooja-card-3-ref.png',
+    '/images/pooja/pooja-card-4-ref.png',
+    '/images/pooja/pooja-card-5-ref.png',
+    '/images/pooja/pooja-card-6-ref.png',
+  ];
+  return cardRefs[Math.abs(displayOrder || 0) % cardRefs.length] || '/images/pooja/pooja-card-1-ref.png';
+}
 export const activeAdminSessions = new Map<string, ActiveSession>();
 
 @Controller('admin')
@@ -503,8 +549,26 @@ export class AdminController {
 
     const totalPages = Math.ceil(totalRecords / take);
 
+    let servicesMap: Record<string, any> = {};
+    try {
+      const sSetting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
+      if (sSetting?.value) {
+        const list = JSON.parse(sSetting.value);
+        if (Array.isArray(list)) {
+          list.forEach((s: any) => {
+            if (s.id) servicesMap[s.id] = s;
+            if (s.serviceId) servicesMap[s.serviceId] = s;
+          });
+        }
+      }
+    } catch (_) {}
+
     const formatted = items.map(cat => {
       const preferred = cat.translations.find(t => t.language.code === lang) || cat.translations[0];
+      const sInfo = servicesMap[cat.slug] || servicesMap[String(cat.id)] || {};
+      const catArtwork = sInfo.artwork || DEFAULT_CATEGORY_ARTWORKS[cat.slug] || '';
+      const catSub = sInfo.sub || preferred?.description || '';
+
       return {
         id: String(cat.id),
         slug: cat.slug,
@@ -512,7 +576,11 @@ export class AdminController {
         isAudio: cat.isAudio,
         isArchived: cat.isArchived,
         title: preferred ? preferred.title : cat.slug,
-        description: preferred?.description || '',
+        subtitle: catSub,
+        description: preferred?.description || catSub,
+        imageUrl: catArtwork,
+        artwork: catArtwork,
+        icon: sInfo.icon || 'Sparkles',
         subcategoriesCount: cat.subcategories.length,
         devotionalCount: cat.devotionalContents.length,
         createdAt: cat.createdAt,
@@ -679,14 +747,14 @@ export class AdminController {
   }
 
 
-    @Delete('categories/:id')
+  @Delete('categories/:id')
   async archiveCategory(@Param('id') id: string) {
     const numId = parseInt(id, 10);
     const existing = await this.prisma.contentCategory.findUnique({ where: { id: numId } });
     if (!existing) throw new NotFoundException(`Category #${id} not found`);
 
-    if (numId <= 23) {
-      throw new BadRequestException(`Category #${numId} is a protected core devotional section`);
+    if (existing.parentId === null && numId <= 9) {
+      throw new BadRequestException(`Category #${numId} is a protected core root category`);
     }
 
     await this.prisma.contentCategory.update({
@@ -695,6 +763,23 @@ export class AdminController {
     });
 
     return { success: true, message: `Category #${numId} safely archived.` };
+  }
+
+  @Post('categories/batch-delete')
+  async batchDeleteCategories(@Body() body: { ids: (number | string)[] }) {
+    if (!body || !body.ids || !Array.isArray(body.ids) || body.ids.length === 0) {
+      throw new BadRequestException('No category IDs provided for batch deletion');
+    }
+    const numIds = body.ids.map(id => Number(id)).filter(id => !isNaN(id));
+    const result = await this.prisma.contentCategory.updateMany({
+      where: { id: { in: numIds } },
+      data: { isArchived: true }
+    });
+    return {
+      success: true,
+      count: result.count,
+      message: `${result.count} record(s) safely archived in database.`
+    };
   }
 
   // 4b. Category Tree & Parents Lookup
@@ -760,15 +845,53 @@ export class AdminController {
         targetParentCondition = parsed;
       } else {
         try {
-          const parentMatch = await this.prisma.contentCategory.findFirst({
-            where: {
-              OR: [
-                { slug: parentId },
-                { slug: parentId.toLowerCase() },
-                { translations: { some: { title: { contains: parentId } } } }
-              ]
+          let parentMatch: any = null;
+          const cleanPid = parentId.toLowerCase().trim();
+          if (cleanPid === 'pooja' || cleanPid === 'pooja-vidhanam' || cleanPid === 'poojalu-vrathaalu' || cleanPid === '113') {
+            parentMatch = await this.prisma.contentCategory.findFirst({
+              where: {
+                OR: [
+                  { id: 113 },
+                  { slug: 'pooja-vidhanam' }
+                ],
+                parentId: null
+              }
+            });
+            if (!parentMatch) {
+              parentMatch = await this.prisma.contentCategory.findFirst({
+                where: {
+                  OR: [
+                    { slug: 'poojalu-vrathaalu' },
+                    { slug: 'pooja' }
+                  ],
+                  parentId: null
+                }
+              });
             }
-          });
+          } else if (cleanPid === 'stotras' || cleanPid === 'divine-stotras' || cleanPid === '114' || cleanPid === '4') {
+            parentMatch = await this.prisma.contentCategory.findFirst({
+              where: {
+                OR: [
+                  { id: 114 },
+                  { slug: 'stotras' },
+                  { id: 4 },
+                  { slug: 'divine-stotras' },
+                  { slug: 'stotramulu' }
+                ],
+                parentId: null
+              }
+            });
+          } else {
+            parentMatch = await this.prisma.contentCategory.findFirst({
+              where: {
+                OR: [
+                  { slug: parentId },
+                  { slug: cleanPid }
+                ],
+                parentId: null
+              }
+            });
+          }
           if (parentMatch) {
             targetParentCondition = parentMatch.id;
           } else {
@@ -781,7 +904,8 @@ export class AdminController {
     }
 
     const where: any = {
-      parentId: targetParentCondition
+      parentId: targetParentCondition,
+      isArchived: false
     };
 
     if (search && search.trim() !== '') {
@@ -848,7 +972,8 @@ export class AdminController {
           parentTitle: parentPref ? parentPref.title : pSlug,
           displayOrder: cat.displayOrder,
           isAudio: cat.isAudio,
-          imageUrl: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
+          imageUrl: customImg || resolveCategoryCardArtwork(cat.slug, finalTitle, pSlug, cat.displayOrder),
+          image: customImg || resolveCategoryCardArtwork(cat.slug, finalTitle, pSlug, cat.displayOrder),
           createdAt: cat.createdAt
         };
       });
@@ -866,62 +991,14 @@ export class AdminController {
       };
     }
 
-    // Default 27-row Subcategory Catalog Fallback (mapped by parent category)
-    const seedCatalog = [
-      // Pooja Vidhanam
-      { id: '1', parentKey: 'pooja', parentTitle: 'Pooja Vidhanam', slug: 'ayyappa-pooja', displayOrder: 10, title: lang === 'te' ? 'అయ్యప్ప పూజ' : lang === 'kn' ? 'ಅಯ್ಯಪ್ಪ ಪೂಜೆ' : lang === 'ta' ? 'ஐயப்ப பூஜை' : lang === 'hi' ? 'अय्यप्पा पूजा' : 'Ayyappa Pooja', description: 'Home worship guides, offerings and prayer sequence for Ayyappa devotees.', isAudio: false, imageUrl: '/images/subcategories/pooja/ayyappa-pooja.webp' },
-      { id: '2', parentKey: 'pooja', parentTitle: 'Pooja Vidhanam', slug: 'ganapati-pooja', displayOrder: 20, title: lang === 'te' ? 'గణపతి పూజ' : lang === 'kn' ? 'ಗಣಪತಿ ಪೂಜೆ' : lang === 'ta' ? 'விநாயகர் பூஜை' : lang === 'hi' ? 'गणपति पूजा' : 'Ganapati Pooja', description: 'Guides to Ganapati worship and preparations for auspicious beginnings.', isAudio: false, imageUrl: '/images/subcategories/pooja/ganapati-pooja.webp' },
-      { id: '3', parentKey: 'pooja', parentTitle: 'Pooja Vidhanam', slug: 'shiva-abhishekam', displayOrder: 30, title: lang === 'te' ? 'శివాభిషేకం' : lang === 'kn' ? 'ಶಿವಾಭಿಷೇಕ' : lang === 'ta' ? 'சிவ அபிஷேகம்' : lang === 'hi' ? 'शिव अभिषेक' : 'Shiva Abhishekam', description: 'Guides to Shiva abhishekam with materials, preparation and worship steps.', isAudio: false, imageUrl: '/images/subcategories/pooja/shiva-abhishekam.webp' },
-      // Divine Stotras
-      { id: '4', parentKey: 'stotras', parentTitle: 'Divine Stotras', slug: 'ayyappa-stotras', displayOrder: 10, title: lang === 'te' ? 'అయ్యప్ప స్తోత్రాలు' : lang === 'kn' ? 'ಅಯ್ಯಪ್ಪ ಸ್ತೋತ್ರಗಳು' : lang === 'ta' ? 'ஐயப்ப ஸ்தோத்திரங்கள்' : lang === 'hi' ? 'अय्यप्पा स्तोत्र' : 'Ayyappa Stotras', description: 'Hymns in praise of Lord Ayyappa, with text and meaning when available.', isAudio: false, imageUrl: '/images/subcategories/stotras/ayyappa-stotras.webp' },
-      { id: '5', parentKey: 'stotras', parentTitle: 'Divine Stotras', slug: 'shiva-stotras', displayOrder: 20, title: lang === 'te' ? 'శివ స్తోత్రాలు' : lang === 'kn' ? 'ಶಿವ ಸ್ತೋತ್ರಗಳು' : lang === 'ta' ? 'சிவ ஸ்தோத்திரங்கள்' : lang === 'hi' ? 'शिव स्तोत्र' : 'Shiva Stotras', description: 'Hymns dedicated to Shiva, including short praises and longer compositions.', isAudio: false, imageUrl: '/images/subcategories/stotras/shiva-stotras.webp' },
-      { id: '6', parentKey: 'stotras', parentTitle: 'Divine Stotras', slug: 'vishnu-stotras', displayOrder: 30, title: lang === 'te' ? 'విష్ణు స్తోత్రాలు' : lang === 'kn' ? 'ವಿಷ್ಣು ಸ್ತೋತ್ರಗಳು' : lang === 'ta' ? 'விஷ்ணு ஸ்தோத்திரங்கள்' : lang === 'hi' ? 'विष्णु स्तोत्र' : 'Vishnu Stotras', description: 'Hymns dedicated to Vishnu and forms worshipped in Vaishnava traditions.', isAudio: false, imageUrl: '/images/subcategories/stotras/vishnu-stotras.webp' },
-      // Daily Slokas
-      { id: '7', parentKey: 'slokas', parentTitle: 'Daily Slokas', slug: 'morning-prayers', displayOrder: 10, title: lang === 'te' ? 'ప్రాతఃకాల ప్రార్థనలు' : lang === 'kn' ? 'ಬೆಳಗಿನ ಪ್ರಾರ್ಥನೆಗಳು' : lang === 'ta' ? 'காலைப் பிரார்த்தனைகள்' : lang === 'hi' ? 'प्रातःकालीन प्रार्थनाएँ' : 'Morning Prayers', description: 'Short verses for beginning the day.', isAudio: false, imageUrl: '/images/subcategories/slokas/morning-prayers.webp' },
-      { id: '8', parentKey: 'slokas', parentTitle: 'Daily Slokas', slug: 'meal-prayers', displayOrder: 20, title: lang === 'te' ? 'భోజన ప్రార్థనలు' : lang === 'kn' ? 'ಊಟದ ಪ್ರಾರ್ಥನೆಗಳು' : lang === 'ta' ? 'உணவுக்கு முன் பிரார்த்தனைகள்' : lang === 'hi' ? 'भोजन प्रार्थनाएँ' : 'Meal Prayers', description: 'Short verses and prayers for recitation before meals.', isAudio: false, imageUrl: '/images/subcategories/slokas/meal-prayers.webp' },
-      { id: '9', parentKey: 'slokas', parentTitle: 'Daily Slokas', slug: 'night-prayers', displayOrder: 30, title: lang === 'te' ? 'రాత్రి ప్రార్థనలు' : lang === 'kn' ? 'ರಾತ್ರಿಯ ಪ್ರಾರ್ಥನೆಗಳು' : lang === 'ta' ? 'இரவுப் பிரார்த்தனைகள்' : lang === 'hi' ? 'रात्रि प्रार्थनाएँ' : 'Night Prayers', description: 'Short verses for reflection and prayer before sleep.', isAudio: false, imageUrl: '/images/subcategories/slokas/night-prayers.webp' },
-      // Bhajans & Songs
-      { id: '10', parentKey: 'songs', parentTitle: 'Bhajans & Songs', slug: 'ayyappa-bhajans', displayOrder: 10, title: lang === 'te' ? 'అయ్యప్ప భజనలు' : lang === 'kn' ? 'ಅಯ್ಯಪ್ಪ ಭಜನೆಗಳು' : lang === 'ta' ? 'ஐயப்ப பஜனைகள்' : lang === 'hi' ? 'अय्यप्पा भजन' : 'Ayyappa Bhajans', description: 'Devotional songs for Ayyappa gatherings and pilgrimage.', isAudio: true, imageUrl: '/images/subcategories/songs/ayyappa-bhajans.webp' },
-      { id: '11', parentKey: 'songs', parentTitle: 'Bhajans & Songs', slug: 'rama-bhajans', displayOrder: 20, title: lang === 'te' ? 'రామ భజనలు' : lang === 'kn' ? 'ರಾಮ ಭಜನೆಗಳು' : lang === 'ta' ? 'இராம பஜனைகள்' : lang === 'hi' ? 'राम भजन' : 'Rama Bhajans', description: 'Group singing and devotional songs dedicated to Rama.', isAudio: true, imageUrl: '/images/subcategories/songs/rama-bhajans.webp' },
-      { id: '12', parentKey: 'songs', parentTitle: 'Bhajans & Songs', slug: 'krishna-bhajans', displayOrder: 30, title: lang === 'te' ? 'కృష్ణ భజనలు' : lang === 'kn' ? 'ಕೃಷ್ಣ ಭಜನೆಗಳು' : lang === 'ta' ? 'கிருஷ்ண பஜனைகள்' : lang === 'hi' ? 'कृष्ण भजन' : 'Krishna Bhajans', description: 'Devotional songs and kirtans dedicated to Krishna.', isAudio: true, imageUrl: '/images/subcategories/songs/krishna-bhajans.webp' },
-      // Live Darshan
-      { id: '13', parentKey: 'live-streams', parentTitle: 'Live Darshan', slug: 'sabarimala-darshan', displayOrder: 10, title: lang === 'te' ? 'శబరిమల దర్శనం' : lang === 'kn' ? 'ಶಬರಿಮಲೆ ದರ್ಶನ' : lang === 'ta' ? 'சபரிமலை தரிசனம்' : lang === 'hi' ? 'सबरीमला दर्शन' : 'Sabarimala Darshan', description: 'Group approved Sabarimala broadcasts and scheduled darshan streams.', isAudio: false, imageUrl: '/images/subcategories/live-streams/sabarimala-darshan.webp' },
-      { id: '14', parentKey: 'live-streams', parentTitle: 'Live Darshan', slug: 'tirumala-darshan', displayOrder: 20, title: lang === 'te' ? 'తిరుమల దర్శనం' : lang === 'kn' ? 'ತಿರುಮಲ ದರ್ಶನ' : lang === 'ta' ? 'திருமலை தரிசனம்' : lang === 'hi' ? 'तिरुमला दर्शन' : 'Tirumala Darshan', description: 'Group approved Tirumala broadcasts and scheduled darshan streams.', isAudio: false, imageUrl: '/images/subcategories/live-streams/tirumala-darshan.webp' },
-      { id: '15', parentKey: 'live-streams', parentTitle: 'Live Darshan', slug: 'kanaka-durga-darshan', displayOrder: 30, title: lang === 'te' ? 'కనకదుర్గ దర్శనం' : lang === 'kn' ? 'ಕನಕ ದುರ್ಗಾ ದರ್ಶನ' : lang === 'ta' ? 'கனக துர்கை தரிசனம்' : lang === 'hi' ? 'कनक दुर्गा दर्शन' : 'Kanaka Durga Darshan', description: 'Group approved broadcasts from the Kanaka Durga temple in Vijayawada.', isAudio: false, imageUrl: '/images/subcategories/live-streams/kanaka-durga-darshan.webp' },
-      // Panchangam
-      { id: '16', parentKey: 'panchangam', parentTitle: 'Panchangam', slug: 'daily-panchangam', displayOrder: 10, title: lang === 'te' ? 'దిన పంచాంగం' : lang === 'kn' ? 'ದಿನ ಪಂಚಾಂಗ' : lang === 'ta' ? 'தினப் பஞ்சாங்கம்' : lang === 'hi' ? 'दैनिक पंचांग' : 'Daily Panchangam', description: 'Daily tithi, nakshatra and other calendar details for the selected location.', isAudio: false, imageUrl: '/images/subcategories/panchangam/daily-panchangam.webp' },
-      { id: '17', parentKey: 'panchangam', parentTitle: 'Panchangam', slug: 'daily-timings', displayOrder: 20, title: lang === 'te' ? 'రోజువారీ సమయాలు' : lang === 'kn' ? 'ದೈನಂದಿನ ಸಮಯಗಳು' : lang === 'ta' ? 'தினசரி நேரங்கள்' : lang === 'hi' ? 'दैनिक समय' : 'Daily Timings', description: 'Local sunrise, sunset, Rahu Kalam and Yamagandam timings.', isAudio: false, imageUrl: '/images/subcategories/panchangam/daily-timings.webp' },
-      { id: '18', parentKey: 'panchangam', parentTitle: 'Panchangam', slug: 'muhurtam', displayOrder: 30, title: lang === 'te' ? 'ముహూర్తాలు' : lang === 'kn' ? 'ಮುಹೂರ್ತಗಳು' : lang === 'ta' ? 'முகூர்த்தங்கள்' : lang === 'hi' ? 'मुहूर्त' : 'Muhurtam', description: 'Browse auspicious timing information by occasion and location.', isAudio: false, imageUrl: '/images/subcategories/panchangam/muhurtam.webp' },
-      // Temple Festivals
-      { id: '19', parentKey: 'festivals', parentTitle: 'Temple Festivals', slug: 'mandala-pooja', displayOrder: 10, title: lang === 'te' ? 'మండల పూజ' : lang === 'kn' ? 'ಮಂಡಲ ಪೂಜೆ' : lang === 'ta' ? 'மண்டல பூஜை' : lang === 'hi' ? 'मंडल पूजा' : 'Mandala Pooja', description: 'Sabarimala Mandala season observances and temple events.', isAudio: false, imageUrl: '/images/subcategories/festivals/mandala-pooja.webp' },
-      { id: '20', parentKey: 'festivals', parentTitle: 'Temple Festivals', slug: 'makaravilakku', displayOrder: 20, title: lang === 'te' ? 'మకరవిళక్కు' : lang === 'kn' ? 'ಮಕರವಿಳಕ್ಕು' : lang === 'ta' ? 'மகரவிளக்கு' : lang === 'hi' ? 'मकरविलक्कु' : 'Makaravilakku', description: 'Sabarimala Makaravilakku season updates and scheduled events.', isAudio: false, imageUrl: '/images/subcategories/festivals/makaravilakku.webp' },
-      { id: '21', parentKey: 'festivals', parentTitle: 'Temple Festivals', slug: 'navaratri', displayOrder: 30, title: lang === 'te' ? 'నవరాత్రులు' : lang === 'kn' ? 'ನವರಾತ್ರಿ' : lang === 'ta' ? 'நவராத்திரி' : lang === 'hi' ? 'नवरात्रि' : 'Navaratri', description: 'Temple celebrations, special poojas and devotional events during Navaratri.', isAudio: false, imageUrl: '/images/subcategories/festivals/navaratri.webp' },
-      // Sacred Temples
-      { id: '22', parentKey: 'temples', parentTitle: 'Sacred Temples', slug: 'ayyappa-temples', displayOrder: 10, title: lang === 'te' ? 'అయ్యప్ప ఆలయాలు' : lang === 'kn' ? 'ಅಯ್ಯಪ್ಪ ದೇವಸ್ಥಾನಗಳು' : lang === 'ta' ? 'ஐயப்பன் கோயில்கள்' : lang === 'hi' ? 'अय्यप्पा मंदिर' : 'Ayyappa Temples', description: 'Ayyappa and Dharma Sastha shrines, including Sabarimala.', isAudio: false, imageUrl: '/images/subcategories/temples/ayyappa-temples.webp' },
-      { id: '23', parentKey: 'temples', parentTitle: 'Sacred Temples', slug: 'vishnu-temples', displayOrder: 20, title: lang === 'te' ? 'విష్ణు ఆలయాలు' : lang === 'kn' ? 'ವಿಷ್ಣು ದೇವಸ್ಥಾನಗಳು' : lang === 'ta' ? 'விஷ்ணு கோயில்கள்' : lang === 'hi' ? 'विष्णु मंदिर' : 'Vishnu Temples', description: 'Shrines dedicated to Vishnu and his forms, including Venkateswara.', isAudio: false, imageUrl: '/images/subcategories/temples/vishnu-temples.webp' },
-      { id: '24', parentKey: 'temples', parentTitle: 'Sacred Temples', slug: 'shiva-temples', displayOrder: 30, title: lang === 'te' ? 'శివాలయాలు' : lang === 'kn' ? 'ಶಿವ ದೇವಸ್ಥಾನಗಳು' : lang === 'ta' ? 'சிவன் கோயில்கள்' : lang === 'hi' ? 'शिव मंदिर' : 'Shiva Temples', description: 'Shiva shrines and pilgrimage destinations, including Jyotirlinga temples.', isAudio: false, imageUrl: '/images/subcategories/temples/shiva-temples.webp' },
-      // Annadanam Seva
-      { id: '25', parentKey: 'donations', parentTitle: 'Annadanam Seva', slug: 'meal-sponsorship', displayOrder: 10, title: lang === 'te' ? 'అన్నదాన ప్రాయోజకత్వం' : lang === 'kn' ? 'ಅನ್ನದಾನ ಪ್ರಾಯೋಜಕತ್ವ' : lang === 'ta' ? 'அன்னதான ஆதரவு' : lang === 'hi' ? 'अन्नदान प्रायोजन' : 'Annadanam Sponsorship', description: 'Browse temple-managed opportunities to sponsor meals for devotees.', isAudio: false, imageUrl: '/images/subcategories/donations/meal-sponsorship.webp' },
-      { id: '26', parentKey: 'donations', parentTitle: 'Annadanam Seva', slug: 'volunteer-seva', displayOrder: 20, title: lang === 'te' ? 'స్వచ్ఛంద సేవ' : lang === 'kn' ? 'ಸ್ವಯಂಸೇವಾ ಸೇವೆ' : lang === 'ta' ? 'தன்னார்வ சேவை' : lang === 'hi' ? 'स्वयंसेवक सेवा' : 'Volunteer Seva', description: 'Browse opportunities to help prepare or serve meals through organizers.', isAudio: false, imageUrl: '/images/subcategories/donations/volunteer-seva.webp' },
-      { id: '27', parentKey: 'donations', parentTitle: 'Annadanam Seva', slug: 'provisions-seva', displayOrder: 30, title: lang === 'te' ? 'అన్నదాన సరుకుల సేవ' : lang === 'kn' ? 'ಅನ್ನದಾನಕ್ಕೆ ದಿನಸಿ ಸೇವೆ' : lang === 'ta' ? 'அன்னதானப் பொருட்கள் சேவை' : lang === 'hi' ? 'अन्नदान सामग्री सेवा' : 'Provisions Seva', description: 'Find organizer-approved ways to contribute rice, lentils or other provisions.', isAudio: false, imageUrl: '/images/subcategories/donations/provisions-seva.webp' },
-    ];
-
-    let filtered = seedCatalog;
-    if (parentId && parentId !== 'all') {
-      filtered = filtered.filter(s => s.parentKey === parentId || s.id === parentId);
-    }
-    if (search && search.trim() !== '') {
-      const q = search.trim().toLowerCase();
-      filtered = filtered.filter(s => s.title.toLowerCase().includes(q) || s.slug.toLowerCase().includes(q) || s.parentTitle.toLowerCase().includes(q));
-    }
-
+    // Purely database-driven: return empty list if no subcategories exist in DB
     return {
-      data: filtered,
+      data: [],
       meta: {
         page: pageNum,
         limit: take,
-        totalRecords: filtered.length,
-        totalPages: 1,
+        totalRecords: 0,
+        totalPages: 0,
         hasNextPage: false,
         hasPreviousPage: false
       }
@@ -1018,7 +1095,8 @@ export class AdminController {
             displayOrder: cat.displayOrder,
             isAudio: cat.isAudio,
             isSubcategory: Boolean(cat.parentId),
-            imageUrl: customImg || `/images/subcategories/${pSlug}/${cat.slug}.webp`,
+            imageUrl: customImg || resolveCategoryCardArtwork(cat.slug, preferred ? preferred.title : cat.slug, pSlug, cat.displayOrder),
+            image: customImg || resolveCategoryCardArtwork(cat.slug, preferred ? preferred.title : cat.slug, pSlug, cat.displayOrder),
             translations: allTranslations,
             contents,
             subcategories,
@@ -1031,45 +1109,7 @@ export class AdminController {
       console.warn('[Admin] getSubcategoryDetail DB query error:', err);
     }
 
-    // Default Fallback
-    const customImg = customImages[id] || '';
-    const formattedTitle = id.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-
-    return {
-      success: true,
-      data: {
-        id: String(id),
-        slug: id,
-        title: formattedTitle,
-        description: `Complete sacred guide, procedure and mantras for ${formattedTitle}.`,
-        parentId: 1,
-        parentTitle: 'Pooja Vidhanam',
-        parentSlug: 'pooja',
-        displayOrder: 1,
-        isAudio: false,
-        isSubcategory: true,
-        imageUrl: customImg || `/images/subcategories/pooja/${id}.webp`,
-        translations: [
-          { code: 'en', name: 'English', title: formattedTitle, description: `Complete sacred guide and mantras for ${formattedTitle}.` },
-          { code: 'te', name: 'Telugu', title: formattedTitle, description: `సంపూర్ణ పూజా విధానం మరియు మంత్రములు.` },
-          { code: 'kn', name: 'Kannada', title: formattedTitle, description: `ಸಂಪೂರ್ಣ ಪೂಜಾ ವಿಧಾನ ಮತ್ತು ಮಂತ್ರಗಳು.` },
-          { code: 'ta', name: 'Tamil', title: formattedTitle, description: `முழுமையான பூஜை முறை மற்றும் மந்திரங்கள்.` },
-          { code: 'hi', name: 'Hindi', title: formattedTitle, description: `सम्पूर्ण पूजा विधान एवं मन्त्र।` }
-        ],
-        contents: [
-          {
-            id: 1,
-            title: `${formattedTitle} Sacred Chanting & Mantras`,
-            slug: `${id}-chanting`,
-            sacredText: 'ఓం శ్రీ స్వామియే శరణం అయ్యప్ప | ఓం నమో భగవతే వాసుదేవాయ ||',
-            meaning: 'Step-by-step sacred procedure, invocation mantras, offering sequence, and prayer rules.'
-          }
-        ],
-        subcategories: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-    };
+    throw new NotFoundException(`Subcategory #${id} not found in database.`);
   }
 
   // 6. Devotional Content (Stotras, Mantras, Slokas, Poojas)
@@ -1117,6 +1157,64 @@ export class AdminController {
     };
   }
 
+  // 6b. Single Devotional Content / Subcategory Type Detail from DB
+  @Get('content/:id')
+  async getDevotionalContentDetail(@Param('id') id: string) {
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      throw new BadRequestException('Invalid content ID');
+    }
+
+    const item = await this.prisma.devotionalContent.findUnique({
+      where: { id: numId },
+      include: {
+        category: {
+          include: {
+            parent: {
+              include: {
+                translations: { include: { language: true } }
+              }
+            },
+            translations: { include: { language: true } }
+          }
+        }
+      }
+    });
+
+    if (!item) {
+      throw new NotFoundException(`Devotional content #${id} not found.`);
+    }
+
+    return {
+      success: true,
+      data: {
+        id: item.id,
+        categoryId: item.categoryId,
+        title: item.title,
+        slug: item.slug,
+        sacredText: item.sacredText || '',
+        meaning: item.meaning || '',
+        displayOrder: item.displayOrder,
+        isPublished: item.isPublished,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        category: item.category ? {
+          id: item.category.id,
+          slug: item.category.slug,
+          parentId: item.category.parentId,
+          parentSlug: item.category.parent?.slug,
+          parentTitle: item.category.parent?.translations?.[0]?.title || item.category.parent?.slug,
+          translations: (item.category.translations || []).map((t: any) => ({
+            code: t.language?.code,
+            name: t.language?.name,
+            title: t.title,
+            description: t.description
+          }))
+        } : null
+      }
+    };
+  }
+
   @Post('content')
   async createDevotionalContent(@Body() body: { categoryId: number; title: string; slug: string; sacredText?: string; meaning?: string }) {
     const created = await this.prisma.devotionalContent.create({
@@ -1151,6 +1249,22 @@ export class AdminController {
   async deleteDevotionalContent(@Param('id') id: string) {
     await this.prisma.devotionalContent.delete({ where: { id: parseInt(id, 10) } });
     return { success: true };
+  }
+
+  @Post('content/batch-delete')
+  async batchDeleteDevotionalContent(@Body() body: { ids: (number | string)[] }) {
+    if (!body || !body.ids || !Array.isArray(body.ids) || body.ids.length === 0) {
+      throw new BadRequestException('No content IDs provided for batch deletion');
+    }
+    const numIds = body.ids.map(id => Number(id)).filter(id => !isNaN(id));
+    const result = await this.prisma.devotionalContent.deleteMany({
+      where: { id: { in: numIds } }
+    });
+    return {
+      success: true,
+      count: result.count,
+      message: `${result.count} subcategory type record(s) deleted from database.`
+    };
   }
 
 
