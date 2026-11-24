@@ -387,36 +387,65 @@ export class AdminController {
   // 3. Languages CRUD
   @Get('languages')
   async getLanguages() {
-    const list = await this.prisma.language.findMany({
-      include: { _count: { select: { contentTranslations: true } } }
-    });
+    try {
+      let list: any[] = [];
+      try {
+        list = await this.prisma.language.findMany({
+          include: { _count: { select: { contentTranslations: true } } }
+        });
+      } catch (countErr: any) {
+        console.warn('[Admin] getLanguages with count failed, falling back to simple findMany:', countErr?.message || countErr);
+        list = await this.prisma.language.findMany();
+      }
 
-    // Dynamic native names from database app settings
-    const nativeSettings = await this.prisma.appSetting.findMany({
-      where: { key: { startsWith: 'lang_native_' } }
-    }).catch(() => []);
-    const dynamicNativeMap: Record<string, string> = {};
-    for (const s of nativeSettings) {
-      const c = s.key.replace('lang_native_', '');
-      dynamicNativeMap[c] = s.value;
+      // Dynamic native names from database app settings
+      const nativeSettings = await this.prisma.appSetting.findMany({
+        where: { key: { startsWith: 'lang_native_' } }
+      }).catch(() => []);
+      const dynamicNativeMap: Record<string, string> = {};
+      for (const s of nativeSettings) {
+        const c = s.key.replace('lang_native_', '');
+        dynamicNativeMap[c] = s.value;
+      }
+
+      const defaultNativeNames: Record<string, string> = {
+        te: 'తెలుగు', kn: 'ಕನ್ನಡ', en: 'English', ta: 'தமிழ்', hi: 'हिन्दी', ml: 'മലയാളം'
+      };
+
+      if (!list || list.length === 0) {
+        return [
+          { id: 1, code: 'te', name: 'Telugu', nativeName: 'తెలుగు', direction: 'LTR', isDefault: true, status: 'ACTIVE', translationCount: 0 },
+          { id: 2, code: 'en', name: 'English', nativeName: 'English', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 },
+          { id: 3, code: 'ta', name: 'Tamil', nativeName: 'தமிழ்', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 },
+          { id: 4, code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 },
+          { id: 5, code: 'hi', name: 'Hindi', nativeName: 'हिन्दी', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 },
+          { id: 6, code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 }
+        ];
+      }
+
+      return list.map(l => ({
+        id: l.id,
+        code: l.code,
+        name: l.name,
+        nativeName: dynamicNativeMap[l.code] || defaultNativeNames[l.code] || (l as any).nativeName || l.name,
+        direction: 'LTR',
+        isDefault: l.code === 'te',
+        status: 'ACTIVE',
+        translationCount: (l as any)._count?.contentTranslations ?? 0,
+        createdAt: l.createdAt,
+        updatedAt: l.updatedAt
+      }));
+    } catch (err: any) {
+      console.error('[Admin] getLanguages fatal error:', err?.message || err);
+      return [
+        { id: 1, code: 'te', name: 'Telugu', nativeName: 'తెలుగు', direction: 'LTR', isDefault: true, status: 'ACTIVE', translationCount: 0 },
+        { id: 2, code: 'en', name: 'English', nativeName: 'English', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 },
+        { id: 3, code: 'ta', name: 'Tamil', nativeName: 'தமிழ்', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 },
+        { id: 4, code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 },
+        { id: 5, code: 'hi', name: 'Hindi', nativeName: 'हिन्दी', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 },
+        { id: 6, code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം', direction: 'LTR', isDefault: false, status: 'ACTIVE', translationCount: 0 }
+      ];
     }
-
-    const defaultNativeNames: Record<string, string> = {
-      te: 'తెలుగు', kn: 'ಕನ್ನಡ', en: 'English', ta: 'தமிழ்', hi: 'हिन्दी'
-    };
-
-    return list.map(l => ({
-      id: l.id,
-      code: l.code,
-      name: l.name,
-      nativeName: dynamicNativeMap[l.code] || defaultNativeNames[l.code] || l.name,
-      direction: 'LTR',
-      isDefault: l.code === 'te',
-      status: 'ACTIVE',
-      translationCount: l._count.contentTranslations,
-      createdAt: l.createdAt,
-      updatedAt: l.updatedAt
-    }));
   }
 
   @Post('languages')
@@ -532,20 +561,44 @@ export class AdminController {
       orderBy.displayOrder = 'asc';
     }
 
-    const [totalRecords, items] = await Promise.all([
-      this.prisma.contentCategory.count({ where }),
-      this.prisma.contentCategory.findMany({
-        where,
-        skip,
-        take,
-        orderBy,
-        include: {
-          translations: { include: { language: true } },
-          subcategories: true,
-          devotionalContents: true,
-        }
-      })
-    ]);
+    let totalRecords = 0;
+    let items: any[] = [];
+
+    try {
+      [totalRecords, items] = await Promise.all([
+        this.prisma.contentCategory.count({ where }),
+        this.prisma.contentCategory.findMany({
+          where,
+          skip,
+          take,
+          orderBy,
+          include: {
+            translations: { include: { language: true } },
+            subcategories: true,
+            devotionalContents: true,
+          }
+        })
+      ]);
+    } catch (err: any) {
+      console.warn('[Admin] getCategories query with all relations failed, falling back to core query:', err?.message || err);
+      try {
+        [totalRecords, items] = await Promise.all([
+          this.prisma.contentCategory.count({ where: { parentId: null } }),
+          this.prisma.contentCategory.findMany({
+            where: { parentId: null },
+            skip,
+            take,
+            orderBy: { displayOrder: 'asc' },
+            include: {
+              translations: { include: { language: true } },
+              subcategories: true,
+            }
+          })
+        ]);
+      } catch (err2: any) {
+        console.error('[Admin] getCategories fallback also failed:', err2?.message || err2);
+      }
+    }
 
     const totalPages = Math.ceil(totalRecords / take);
 
@@ -564,25 +617,27 @@ export class AdminController {
     } catch (_) {}
 
     const formatted = items.map(cat => {
-      const preferred = cat.translations.find(t => t.language.code === lang) || cat.translations[0];
+      const preferred = cat.translations?.find((t: any) => t?.language?.code === lang) || cat.translations?.[0];
       const sInfo = servicesMap[cat.slug] || servicesMap[String(cat.id)] || {};
       const catArtwork = sInfo.artwork || DEFAULT_CATEGORY_ARTWORKS[cat.slug] || '';
       const catSub = sInfo.sub || preferred?.description || '';
+      const subCount = Array.isArray(cat.subcategories) ? cat.subcategories.length : 0;
+      const devCount = Array.isArray(cat.devotionalContents) ? cat.devotionalContents.length : 0;
 
       return {
         id: String(cat.id),
         slug: cat.slug,
-        displayOrder: cat.displayOrder,
-        isAudio: cat.isAudio,
-        isArchived: cat.isArchived,
+        displayOrder: cat.displayOrder ?? 0,
+        isAudio: Boolean(cat.isAudio),
+        isArchived: Boolean(cat.isArchived),
         title: preferred ? preferred.title : cat.slug,
         subtitle: catSub,
         description: preferred?.description || catSub,
         imageUrl: catArtwork,
         artwork: catArtwork,
         icon: sInfo.icon || 'Sparkles',
-        subcategoriesCount: cat.subcategories.length,
-        devotionalCount: cat.devotionalContents.length,
+        subcategoriesCount: subCount,
+        devotionalCount: devCount,
         createdAt: cat.createdAt,
         updatedAt: cat.updatedAt
       };
@@ -1051,8 +1106,10 @@ export class AdminController {
       });
 
       if (cat) {
-        const preferred = cat.translations.find((t: any) => t.language?.code === lang) || cat.translations[0];
-        const parentPref = cat.parent?.translations?.find((t: any) => t.language?.code === lang) || cat.parent?.translations?.[0];
+        const exactMatch = cat.translations.find((t: any) => t.language?.code === lang);
+        const preferred = exactMatch || cat.translations[0];
+        const exactParentMatch = cat.parent?.translations?.find((t: any) => t.language?.code === lang);
+        const parentPref = exactParentMatch || cat.parent?.translations?.[0];
         const pSlug = cat.parent?.slug || 'pooja';
         const customImg = customImages[String(cat.id)] || customImages[cat.slug];
 
@@ -1063,14 +1120,32 @@ export class AdminController {
           description: t.description || null
         }));
 
-        const contents = cat.devotionalContents.map((d: any) => ({
-          id: d.id,
-          title: d.title,
-          slug: d.slug,
-          sacredText: d.sacredText || null,
-          meaning: d.meaning || null,
-          displayOrder: d.displayOrder
-        }));
+        // Fetch any localized devotional content translations for this language
+        const contentKeys = cat.devotionalContents.map((d: any) => `devotional_content_${d.id}_${lang.toLowerCase()}`);
+        let contentSettingMap = new Map<string, any>();
+        if (contentKeys.length > 0) {
+          try {
+            const contentSettings = await this.prisma.appSetting.findMany({
+              where: { key: { in: contentKeys } }
+            });
+            for (const s of contentSettings) {
+              try { contentSettingMap.set(s.key, JSON.parse(s.value)); } catch {}
+            }
+          } catch {}
+        }
+
+        const contents = cat.devotionalContents.map((d: any) => {
+          const loc = contentSettingMap.get(`devotional_content_${d.id}_${lang.toLowerCase()}`);
+          return {
+            id: d.id,
+            title: loc?.title || d.title,
+            slug: d.slug,
+            sacredText: loc?.sacredText || d.sacredText || null,
+            meaning: loc?.meaning || d.meaning || null,
+            displayOrder: d.displayOrder,
+            hasExactTranslation: Boolean(loc)
+          };
+        });
 
         const subcategories = cat.subcategories.map((sub: any) => {
           const subPref = sub.translations.find((t: any) => t.language?.code === lang) || sub.translations[0];
@@ -1087,10 +1162,14 @@ export class AdminController {
           data: {
             id: String(cat.id),
             slug: cat.slug,
-            title: preferred ? preferred.title : cat.slug,
-            description: preferred ? preferred.description : null,
+            title: exactMatch ? exactMatch.title : (preferred ? preferred.title : cat.slug),
+            description: exactMatch ? exactMatch.description : (preferred ? preferred.description : null),
+            exactTitle: exactMatch ? exactMatch.title : null,
+            exactDescription: exactMatch ? exactMatch.description : null,
+            hasExactTranslation: Boolean(exactMatch),
+            requestedLang: lang,
             parentId: cat.parentId,
-            parentTitle: parentPref ? parentPref.title : pSlug,
+            parentTitle: exactParentMatch ? exactParentMatch.title : (parentPref ? parentPref.title : pSlug),
             parentSlug: pSlug,
             displayOrder: cat.displayOrder,
             isAudio: cat.isAudio,
@@ -1159,7 +1238,10 @@ export class AdminController {
 
   // 6b. Single Devotional Content / Subcategory Type Detail from DB
   @Get('content/:id')
-  async getDevotionalContentDetail(@Param('id') id: string) {
+  async getDevotionalContentDetail(
+    @Param('id') id: string,
+    @Query('lang') lang: string = 'te'
+  ) {
     const numId = parseInt(id, 10);
     if (isNaN(numId)) {
       throw new BadRequestException('Invalid content ID');
@@ -1185,15 +1267,48 @@ export class AdminController {
       throw new NotFoundException(`Devotional content #${id} not found.`);
     }
 
+    // Check localized translations from appSetting for requested lang
+    let locSetting: any = null;
+    try {
+      const s = await this.prisma.appSetting.findUnique({
+        where: { key: `devotional_content_${item.id}_${lang.toLowerCase()}` }
+      });
+      if (s && s.value) locSetting = JSON.parse(s.value);
+    } catch {}
+
+    // Find all translations for this content in appSetting
+    const allSettings = await this.prisma.appSetting.findMany({
+      where: { key: { startsWith: `devotional_content_${item.id}_` } }
+    });
+    const contentTranslations: any[] = [];
+    for (const s of allSettings) {
+      const code = s.key.replace(`devotional_content_${item.id}_`, '');
+      try {
+        const val = JSON.parse(s.value);
+        contentTranslations.push({
+          code,
+          title: val.title,
+          sacredText: val.sacredText,
+          meaning: val.meaning
+        });
+      } catch {}
+    }
+
     return {
       success: true,
       data: {
         id: item.id,
         categoryId: item.categoryId,
-        title: item.title,
+        title: locSetting?.title || item.title,
         slug: item.slug,
-        sacredText: item.sacredText || '',
-        meaning: item.meaning || '',
+        sacredText: locSetting?.sacredText || item.sacredText || '',
+        meaning: locSetting?.meaning || item.meaning || '',
+        exactTitle: locSetting ? locSetting.title : null,
+        exactSacredText: locSetting ? locSetting.sacredText : null,
+        exactMeaning: locSetting ? locSetting.meaning : null,
+        hasExactTranslation: Boolean(locSetting),
+        requestedLang: lang,
+        translations: contentTranslations,
         displayOrder: item.displayOrder,
         isPublished: item.isPublished,
         createdAt: item.createdAt,
@@ -1203,7 +1318,8 @@ export class AdminController {
           slug: item.category.slug,
           parentId: item.category.parentId,
           parentSlug: item.category.parent?.slug,
-          parentTitle: item.category.parent?.translations?.[0]?.title || item.category.parent?.slug,
+          parentTitle: item.category.parent?.translations?.find((t: any) => t.language?.code === lang)?.title
+            || item.category.parent?.translations?.[0]?.title || item.category.parent?.slug,
           translations: (item.category.translations || []).map((t: any) => ({
             code: t.language?.code,
             name: t.language?.name,
@@ -1216,7 +1332,7 @@ export class AdminController {
   }
 
   @Post('content')
-  async createDevotionalContent(@Body() body: { categoryId: number; title: string; slug: string; sacredText?: string; meaning?: string }) {
+  async createDevotionalContent(@Body() body: { categoryId: number; title: string; slug: string; sacredText?: string; meaning?: string; displayOrder?: number; isPublished?: boolean; lang?: string }) {
     const created = await this.prisma.devotionalContent.create({
       data: {
         categoryId: Number(body.categoryId),
@@ -1224,9 +1340,35 @@ export class AdminController {
         slug: body.slug || `content-${Date.now()}`,
         sacredText: body.sacredText || '',
         meaning: body.meaning || '',
-        isPublished: true
+        displayOrder: body.displayOrder !== undefined ? Number(body.displayOrder) : 0,
+        isPublished: body.isPublished !== undefined ? Boolean(body.isPublished) : true
       }
     });
+
+    if (body.lang) {
+      const contentKey = `devotional_content_${created.id}_${String(body.lang).toLowerCase()}`;
+      await this.prisma.appSetting.upsert({
+        where: { key: contentKey },
+        update: {
+          value: JSON.stringify({
+            title: body.title,
+            sacredText: body.sacredText,
+            meaning: body.meaning
+          }),
+          description: `Localized devotional content ${created.id} in ${body.lang.toUpperCase()}`
+        },
+        create: {
+          key: contentKey,
+          value: JSON.stringify({
+            title: body.title,
+            sacredText: body.sacredText,
+            meaning: body.meaning
+          }),
+          description: `Localized devotional content ${created.id} in ${body.lang.toUpperCase()}`
+        }
+      });
+    }
+
     return { success: true, data: created };
   }
 
@@ -1237,11 +1379,38 @@ export class AdminController {
       where: { id: numId },
       data: {
         title: body.title,
+        slug: body.slug,
         sacredText: body.sacredText,
         meaning: body.meaning,
+        displayOrder: body.displayOrder !== undefined ? Number(body.displayOrder) : undefined,
         isPublished: body.isPublished !== undefined ? Boolean(body.isPublished) : undefined
       }
     });
+
+    if (body.lang) {
+      const contentKey = `devotional_content_${numId}_${String(body.lang).toLowerCase()}`;
+      await this.prisma.appSetting.upsert({
+        where: { key: contentKey },
+        update: {
+          value: JSON.stringify({
+            title: body.title,
+            sacredText: body.sacredText,
+            meaning: body.meaning
+          }),
+          description: `Localized devotional content ${numId} in ${body.lang.toUpperCase()}`
+        },
+        create: {
+          key: contentKey,
+          value: JSON.stringify({
+            title: body.title,
+            sacredText: body.sacredText,
+            meaning: body.meaning
+          }),
+          description: `Localized devotional content ${numId} in ${body.lang.toUpperCase()}`
+        }
+      });
+    }
+
     return { success: true, data: updated };
   }
 
@@ -2486,35 +2655,41 @@ export class AdminController {
   // 13. Settings, App Logo, Colors, Title, Description, App Store Links & Social Media
   @Get('settings/general')
   async getGeneralSettings() {
-    const settings = await this.prisma.appSetting.findMany({
-      where: {
-        key: {
-          in: [
-            'app_logo',
-            'app_title',
-            'app_tagline',
-            'app_description',
-            'theme_primary_color',
-            'theme_secondary_color',
-            'theme_background_color',
-            'theme_surface_color',
-            'app_play_store_url',
-            'app_app_store_url',
-            'social_youtube_url',
-            'social_telegram_url',
-            'social_instagram_url',
-            'social_facebook_url',
-            'social_whatsapp_url',
-            'devotional_ticker'
-          ]
-        }
-      }
-    });
-
     const settingsMap: Record<string, string> = {};
-    settings.forEach(s => {
-      settingsMap[s.key] = s.value;
-    });
+    try {
+      const settings = await this.prisma.appSetting.findMany({
+        where: {
+          key: {
+            in: [
+              'app_logo',
+              'app_title',
+              'app_tagline',
+              'app_description',
+              'theme_primary_color',
+              'theme_secondary_color',
+              'theme_background_color',
+              'theme_surface_color',
+              'app_play_store_url',
+              'app_app_store_url',
+              'social_youtube_url',
+              'social_telegram_url',
+              'social_instagram_url',
+              'social_facebook_url',
+              'social_whatsapp_url',
+              'devotional_ticker'
+            ]
+          }
+        }
+      });
+
+      if (Array.isArray(settings)) {
+        settings.forEach(s => {
+          settingsMap[s.key] = s.value;
+        });
+      }
+    } catch (err: any) {
+      console.warn('[Admin] getGeneralSettings DB query warning:', err?.message || err);
+    }
 
     const rawLogo = settingsMap['app_logo'];
     const resolvedLogo = rawLogo
@@ -3516,14 +3691,22 @@ export class AdminController {
 
   @Get('settings/ticker')
   async getTicker() {
-    const setting = await this.prisma.appSetting.findUnique({
-      where: { key: 'devotional_ticker' }
-    });
+    try {
+      const setting = await this.prisma.appSetting.findUnique({
+        where: { key: 'devotional_ticker' }
+      });
 
-    return {
-      ticker: setting?.value || '🕉️ స్వామియే శరణం అయ్యప్ప — శ్రీ అయ్యప్ప స్వామి నిత్య పూజా విధానం, అష్టోత్తరం, హరివరాసనం మరియు సమగ్ర శబరిమల యాత్రా దర్శిని 🕉️',
-      updatedAt: setting?.updatedAt || new Date()
-    };
+      return {
+        ticker: setting?.value || '🕉️ స్వామియే శరణం అయ్యప్ప — శ్రీ అయ్యప్ప స్వామి నిత్య పూజా విధానం, అష్టోత్తరం, హరివరాసనం మరియు సమగ్ర శబరిమల యాత్రా దర్శిని 🕉️',
+        updatedAt: setting?.updatedAt || new Date()
+      };
+    } catch (err: any) {
+      console.warn('[Admin] getTicker DB warning:', err?.message || err);
+      return {
+        ticker: '🕉️ స్వామియే శరణం అయ్యప్ప — శ్రీ అయ్యప్ప స్వామి నిత్య పూజా విధానం, అష్టోత్తరం, హరివరాసనం మరియు సమగ్ర శబరిమల యాత్రా దర్శిని 🕉️',
+        updatedAt: new Date()
+      };
+    }
   }
 
   @Post('settings/ticker')
@@ -3809,6 +3992,21 @@ export class AdminController {
             key: typeKey,
             value: JSON.stringify(fieldValues),
             description: `Localized temple type ${recordId} in ${langCode.toUpperCase()}`,
+          },
+        });
+        savedCount++;
+      } else if (module === 'devotional_contents' && recordId) {
+        const contentKey = `devotional_content_${recordId}_${langCode.toLowerCase()}`;
+        await this.prisma.appSetting.upsert({
+          where: { key: contentKey },
+          update: {
+            value: JSON.stringify(fieldValues),
+            description: `Localized devotional content ${recordId} in ${langCode.toUpperCase()}`,
+          },
+          create: {
+            key: contentKey,
+            value: JSON.stringify(fieldValues),
+            description: `Localized devotional content ${recordId} in ${langCode.toUpperCase()}`,
           },
         });
         savedCount++;
