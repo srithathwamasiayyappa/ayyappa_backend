@@ -1543,121 +1543,33 @@ export class AdminController {
         })
       ]);
 
-      // If database has records, return them
-      if (totalRecords > 0) {
-        return {
-          success: true,
-          data: items,
-          meta: {
-            page: pageNum,
-            limit: take,
-            totalRecords,
-            totalPages: Math.ceil(totalRecords / take),
-            hasNextPage: pageNum < Math.ceil(totalRecords / take),
-            hasPreviousPage: pageNum > 1
-          }
-        };
-      }
+      return {
+        success: true,
+        data: items,
+        meta: {
+          page: pageNum,
+          limit: take,
+          totalRecords,
+          totalPages: Math.ceil(totalRecords / take),
+          hasNextPage: pageNum < Math.ceil(totalRecords / take),
+          hasPreviousPage: pageNum > 1
+        }
+      };
     } catch (err) {
-      console.warn('[Admin] Festival database query fallback:', err);
+      console.warn('[Admin] Festival database query error:', err);
+      return {
+        success: true,
+        data: [],
+        meta: {
+          page: pageNum,
+          limit: take,
+          totalRecords: 0,
+          totalPages: 0,
+          hasNextPage: false,
+          hasPreviousPage: false
+        }
+      };
     }
-
-    // Default authoritative Sabarimala festivals fallback so admin always has rich data
-    const fallbackFestivals = [
-      {
-        id: 1,
-        slug: 'makaravilakku-sankranti',
-        festivalDate: new Date('2026-01-14'),
-        sourceNote: 'Sabarimala Devaswom — Makaravilakku & Makara Jyothi Darshanam',
-        isPublished: true,
-        translations: [
-          { name: 'Makaravilakku & Makara Sankranti', description: 'Sacred Makara Jyothi manifests at Ponnambalamedu', language: { code: 'en', name: 'English' } },
-          { name: 'మకరవిళక్కు & మకర సంక్రాంతి', description: 'పొన్నంబలమేడుపై దివ్య మకరజ్యోతి దర్శనం', language: { code: 'te', name: 'Telugu' } },
-          { name: 'ಮಕರವಿಳಕ್ಕು & ಮಕರ ಸಂಕ್ರಾಂತಿ', description: 'ಪೊನ್ನಂಬಲಮೇಡುವಿನಲ್ಲಿ ದಿವ್ಯ ಮಕರಜ್ಯೋತಿ ದರ್ಶನ', language: { code: 'kn', name: 'Kannada' } },
-          { name: 'மகரவிளக்கு & மகர சங்கராந்தி', description: 'பொன்னம்பலமேட்டில் திவ்ய மகரஜோதி தரிசனம்', language: { code: 'ta', name: 'Tamil' } },
-          { name: 'मकरविलक्कु एवं मकर संक्रांति', description: 'पोन्नम्बलमेडु पर दिव्य मकर ज्योति दर्शन', language: { code: 'hi', name: 'Hindi' } },
-        ]
-      },
-      {
-        id: 2,
-        slug: 'pamba-arattu-ayyappa-jayanthi',
-        festivalDate: new Date('2026-04-01'),
-        sourceNote: 'Pamba Holy River — Sri Dharma Sastha Jayanthi & Arattu',
-        isPublished: true,
-        translations: [
-          { name: 'Pamba Arattu (Sri Ayyappa Jayanthi)', description: 'Sacred holy dip at Pamba River honoring Lord Ayyappa manifestation', language: { code: 'en', name: 'English' } },
-          { name: 'పంబా ఆరాట్టు (శ్రీ అయ్యప్ప స్వామి జయంతి)', description: 'పవిత్ర పంబా నదిలో ఆరాట్టు మహోత్సవం', language: { code: 'te', name: 'Telugu' } },
-          { name: 'ಪಂಪಾ ಆರಾಟ್ಟು (ಶ್ರೀ ಅಯ್ಯಪ್ಪ ಸ್ವಾಮಿ ಜಯಂತಿ)', description: 'ಪವಿತ್ರ ಪಂಪಾ ನದಿಯಲ್ಲಿ ಆರಾಟ್ಟು ಮಹೋತ್ಸವ', language: { code: 'kn', name: 'Kannada' } },
-          { name: 'பம்பா ஆராட்டு (ஸ்ரீ ஐயப்ப ஜெயந்தி)', description: 'புனித பம்பா நதியில் ஆராட்டு விழா', language: { code: 'ta', name: 'Tamil' } },
-          { name: 'पंपा आराट्टु (श्री अय्यप्पा जयंती)', description: 'पवित्र पंपा नदी में आराट्टु स्नान महोत्सव', language: { code: 'hi', name: 'Hindi' } },
-        ]
-      },
-      {
-        id: 3,
-        slug: 'vishu-kani-festival',
-        festivalDate: new Date('2026-04-14'),
-        sourceNote: 'Sabarimala Sri Ayyappa Temple — Vishu Kani Darshanam',
-        isPublished: true,
-        translations: [
-          { name: 'Vishu Kani Festival', description: 'Auspicious New Year festival & gold coin offering (Kaineettam) at Sabarimala', language: { code: 'en', name: 'English' } },
-          { name: 'విషు కణి మహోత్సవం', description: 'శబరిమలలో విషు కణి దర్శనం మరియు కైనీట్టం', language: { code: 'te', name: 'Telugu' } },
-          { name: 'ವಿಷು ಕಣಿ ಮಹೋತ್ಸವ', description: 'ಶಬರಿಮಲೆಯಲ್ಲಿ ವಿಷು ಕಣಿ ದರ್ಶನ ಮತ್ತು ಕೈನೀಟ್ಟಂ', language: { code: 'kn', name: 'Kannada' } },
-          { name: 'விஷு கனி விழா', description: 'சபரிமலையில் விஷு கனி தரிசனம் மற்றும் கைநீட்டம்', language: { code: 'ta', name: 'Tamil' } },
-          { name: 'विषु कणि महोत्सव', description: 'सबरीमला में विषु कणि दर्शन और कैनीट्टम', language: { code: 'hi', name: 'Hindi' } },
-        ]
-      },
-      {
-        id: 4,
-        slug: 'mandala-pooja-commencement',
-        festivalDate: new Date('2026-11-17'),
-        sourceNote: 'Vrischika Masam 1 — 41-Day Sacred Mandala Vrata Commencement',
-        isPublished: true,
-        translations: [
-          { name: 'Mandala Pooja Commencement', description: 'Beginning of the holy 41-day Mandala Deeksha across South India', language: { code: 'en', name: 'English' } },
-          { name: 'మండల పూజ ప్రారంభం (వృశ్చిక మాసం 1)', description: '41 రోజుల పవిత్ర మండల దీక్ష ఆరంభం', language: { code: 'te', name: 'Telugu' } },
-          { name: 'ಮಂಡಲ ಪೂಜೆ ಪ್ರಾರಂಭ (ವೃಶ್ಚಿಕ ಮಾಸ 1)', description: '41 ದಿನಗಳ ಪವಿತ್ರ ಮಂಡಲ ದೀಕ್ಷೆ ಆರಂಭ', language: { code: 'kn', name: 'Kannada' } },
-          { name: 'மண்டல பூஜை தொடக்கம் (கார்த்திகை 1)', description: '41 நாட்கள் புனித மண்டல விரதத் தொடக்கம்', language: { code: 'ta', name: 'Tamil' } },
-          { name: 'मंडला पूजा आरंभ (वृश्चिक मास 1)', description: '41 दिवसीय पवित्र मंडला दीक्षा का आरंभ', language: { code: 'hi', name: 'Hindi' } },
-        ]
-      },
-      {
-        id: 5,
-        slug: 'mandala-pooja-finale',
-        festivalDate: new Date('2026-12-27'),
-        sourceNote: 'Sabarimala Sanctum Sanctorum — Mandala Kalam Conclusion with Kalabhabhishekam',
-        isPublished: true,
-        translations: [
-          { name: 'Mandala Pooja Finale', description: 'Grand culmination of the 41-day Mandala season with Golden Thanki Anki adornment', language: { code: 'en', name: 'English' } },
-          { name: 'మండల పూజ ముగింపు (కళభాభిషేకం)', description: 'తంగ అంగి అలంకరణతో మండల కాలం ముగింపు', language: { code: 'te', name: 'Telugu' } },
-          { name: 'ಮಂಡಲ ಪೂಜೆ ಮುಕ್ತಾಯ (ಕಳಭಾಭಿಷೇಕ)', description: 'ತಂಗ ಅಂಗಿ ಅಲಂಕಾರದೊಂದಿಗೆ ಮಂಡಲ ಕಾಲ ಸಮಾಪ್ತಿ', language: { code: 'kn', name: 'Kannada' } },
-          { name: 'மண்டல பூஜை நிறைவு (களபாபிஷேகம்)', description: 'தங்க அங்கி அலங்காரத்துடன் மண்டல பூஜை நிறைவு', language: { code: 'ta', name: 'Tamil' } },
-          { name: 'मंडला पूजा समापन (कलभाभिषेकम)', description: 'स्वर्ण अंगी श्रृंगार के साथ मंडला काल का भव्य समापन', language: { code: 'hi', name: 'Hindi' } },
-        ]
-      }
-    ];
-
-    let filtered = fallbackFestivals;
-    if (search && search.trim() !== '') {
-      const q = search.trim().toLowerCase();
-      filtered = fallbackFestivals.filter(f => 
-        f.slug.toLowerCase().includes(q) ||
-        f.sourceNote.toLowerCase().includes(q) ||
-        f.translations.some(t => t.name.toLowerCase().includes(q) || (t.description && t.description.toLowerCase().includes(q)))
-      );
-    }
-
-    return {
-      success: true,
-      data: filtered,
-      meta: {
-        page: pageNum,
-        limit: take,
-        totalRecords: filtered.length,
-        totalPages: 1,
-        hasNextPage: false,
-        hasPreviousPage: false
-      }
-    };
   }
 
   @Get('panchangam/festivals/:id')
@@ -1675,13 +1587,6 @@ export class AdminController {
       } catch (err) {
         console.warn('Get festival by id error:', err);
       }
-    }
-
-    // Lookup in fallback festivals
-    const listRes = await this.getFestivals('1', '100');
-    const match = listRes.data.find((f: any) => String(f.id) === id || f.slug === id);
-    if (match) {
-      return { success: true, data: match };
     }
 
     return { success: false, statusCode: 404, message: `Festival '${id}' not found.` };
@@ -3790,13 +3695,13 @@ export class AdminController {
       });
 
       return {
-        ticker: setting?.value || '🕉️ స్వామియే శరణం అయ్యప్ప — శ్రీ అయ్యప్ప స్వామి నిత్య పూజా విధానం, అష్టోత్తరం, హరివరాసనం మరియు సమగ్ర శబరిమల యాత్రా దర్శిని 🕉️',
+        ticker: setting?.value || '',
         updatedAt: setting?.updatedAt || new Date()
       };
     } catch (err: any) {
       console.warn('[Admin] getTicker DB warning:', err?.message || err);
       return {
-        ticker: '🕉️ స్వామియే శరణం అయ్యప్ప — శ్రీ అయ్యప్ప స్వామి నిత్య పూజా విధానం, అష్టోత్తరం, హరివరాసనం మరియు సమగ్ర శబరిమల యాత్రా దర్శిని 🕉️',
+        ticker: '',
         updatedAt: new Date()
       };
     }
