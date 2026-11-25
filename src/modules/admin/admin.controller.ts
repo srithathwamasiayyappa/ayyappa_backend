@@ -3071,6 +3071,31 @@ export class AdminController {
   @Get('category-services')
   async getCategoryServices() {
     try {
+      // 1. Query dedicated category_services table from MySQL DB
+      if ((this.prisma as any).categoryService) {
+        const items = await (this.prisma as any).categoryService.findMany({
+          orderBy: { displayOrder: 'asc' }
+        });
+        if (items && items.length > 0) {
+          return {
+            success: true,
+            total: items.length,
+            data: items.map((item: any) => ({
+              id: item.serviceId,
+              serviceId: item.serviceId,
+              title: item.title,
+              sub: item.sub || '',
+              icon: item.icon,
+              url: item.url,
+              artwork: item.artwork || '',
+              displayOrder: item.displayOrder,
+              isActive: item.isActive ?? true
+            }))
+          };
+        }
+      }
+
+      // 2. Query dynamic app_settings for category_services in MySQL DB
       const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
       if (setting && setting.value) {
         const parsed = JSON.parse(setting.value);
@@ -3082,43 +3107,16 @@ export class AdminController {
           };
         }
       }
-
-      // Auto-initialize 9 sanctum devotional services into database
-      const defaultServices = [
-        { id: 'pooja', serviceId: 'pooja', title: 'Pooja Vidhanam', sub: 'Step-by-step sacred rituals', icon: 'Flame', url: '/subcategories', artwork: '/images/categories/art-pooja-trans.png', displayOrder: 1, isActive: true },
-        { id: 'stotras', serviceId: 'stotras', title: 'Divine Stotras', sub: 'Sacred stotrams & kavachas', icon: 'BookOpen', url: '/subcategories', artwork: '/images/categories/art-stotras-trans.png', displayOrder: 2, isActive: true },
-        { id: 'slokas', serviceId: 'slokas', title: 'Daily Slokas', sub: 'Daily recitation verses', icon: 'Sparkles', url: '/subcategories', artwork: '/images/categories/art-slokas-trans.png', displayOrder: 3, isActive: true },
-        { id: 'astothrams', serviceId: 'astothrams', title: 'Astothrams', sub: '108 sacred names', icon: 'ListChecks', url: '/subcategories', artwork: '/images/categories/art-astothrams-trans.png', displayOrder: 4, isActive: true },
-        { id: 'bhajans', serviceId: 'bhajans', title: 'Bhajans & Songs', sub: 'Devotional audio & lyrics', icon: 'Music', url: '/subcategories', artwork: '/images/categories/art-bhajans-trans.png', displayOrder: 5, isActive: true },
-        { id: 'harathis', serviceId: 'harathis', title: 'Harathis & Songs', sub: 'Mangala harathi vidhis', icon: 'Flame', url: '/subcategories', artwork: '/images/categories/art-harathis-trans.png', displayOrder: 6, isActive: true },
-        { id: 'panchangam', serviceId: 'panchangam', title: 'Panchangam', sub: 'Tithi, nakshatra & timings', icon: 'Calendar', url: '/panchangam', artwork: '/images/categories/art-panchangam-trans.png', displayOrder: 7, isActive: true },
-        { id: 'temples', serviceId: 'temples', title: 'Temples', sub: 'Sacred shrines directory', icon: 'Landmark', url: '/temples', artwork: '/images/categories/art-temples-trans.png', displayOrder: 8, isActive: true },
-        { id: 'festivals', serviceId: 'festivals', title: 'Festivals', sub: 'Auspicious dates & vrata', icon: 'Sun', url: '/festivals', artwork: '/images/categories/art-festivals-trans.png', displayOrder: 9, isActive: true }
-      ];
-
-      await this.prisma.appSetting.upsert({
-        where: { key: 'category_services' },
-        update: { value: JSON.stringify(defaultServices) },
-        create: {
-          key: 'category_services',
-          value: JSON.stringify(defaultServices),
-          description: 'Devotional Services Directory (9 Sanctum Categories)'
-        }
-      }).catch(() => {});
-
-      return {
-        success: true,
-        total: defaultServices.length,
-        data: defaultServices
-      };
     } catch (e: any) {
-      console.warn('[Admin] getCategoryServices error handled safely:', e?.message);
-      return {
-        success: true,
-        total: 0,
-        data: []
-      };
+      console.warn('[Admin] getCategoryServices database error:', e?.message);
     }
+
+    // Zero fallback / mock data: strictly return database result
+    return {
+      success: true,
+      total: 0,
+      data: []
+    };
   }
 
   @Get('category-services/:id')
