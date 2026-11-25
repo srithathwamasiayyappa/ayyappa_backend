@@ -1212,28 +1212,43 @@ export class AdminController {
       ];
     }
 
-    const [totalRecords, items] = await Promise.all([
-      this.prisma.devotionalContent.count({ where }),
-      this.prisma.devotionalContent.findMany({
-        where,
-        skip,
-        take,
-        orderBy: { displayOrder: 'asc' },
-        include: { category: true }
-      })
-    ]);
+    try {
+      const [totalRecords, items] = await Promise.all([
+        this.prisma.devotionalContent.count({ where }),
+        this.prisma.devotionalContent.findMany({
+          where,
+          skip,
+          take,
+          orderBy: { displayOrder: 'asc' },
+          include: { category: true }
+        })
+      ]);
 
-    return {
-      data: items,
-      meta: {
-        page: pageNum,
-        limit: take,
-        totalRecords,
-        totalPages: Math.ceil(totalRecords / take),
-        hasNextPage: pageNum < Math.ceil(totalRecords / take),
-        hasPreviousPage: pageNum > 1
-      }
-    };
+      return {
+        data: items,
+        meta: {
+          page: pageNum,
+          limit: take,
+          totalRecords,
+          totalPages: Math.ceil(totalRecords / take),
+          hasNextPage: pageNum < Math.ceil(totalRecords / take),
+          hasPreviousPage: pageNum > 1
+        }
+      };
+    } catch (err: any) {
+      console.warn('getDevotionalContent error handled safely:', err?.message);
+      return {
+        data: [],
+        meta: {
+          page: pageNum,
+          limit: take,
+          totalRecords: 0,
+          totalPages: 0,
+          hasNextPage: false,
+          hasPreviousPage: false
+        }
+      };
+    }
   }
 
   // 6b. Single Devotional Content / Subcategory Type Detail from DB
