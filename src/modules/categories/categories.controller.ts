@@ -34,66 +34,105 @@ export class CategoriesController {
   // 1. Devotional Services & Categories Endpoint (Direct from MySQL with server-side search and multi-language support)
   @Get('services')
   async getCategoryServices(@Query('search') search?: string, @Query('lang') lang?: string) {
+    const q = search && search.trim() !== '' ? search.trim().toLowerCase() : null;
+
+    // 1. Dedicated category_services table from DB
     try {
-      const where: any = { isActive: true };
-
-      if (search && search.trim() !== '') {
-        const q = search.trim();
-        where.OR = [
-          { title: { contains: q } },
-          { sub: { contains: q } },
-          { serviceId: { contains: q } },
-        ];
-      }
-
       if ((this.prisma as any).categoryService) {
         const items = await (this.prisma as any).categoryService.findMany({
-          where,
           orderBy: { displayOrder: 'asc' },
         });
 
         if (items && items.length > 0) {
-          return {
-            success: true,
-            data: items.map((item: any) => ({
-              id: item.serviceId,
-              serviceId: item.serviceId,
-              title: item.title,
-              sub: item.sub || '',
-              icon: item.icon,
-              url: item.url,
-              artwork: item.artwork || '',
-              displayOrder: item.displayOrder,
-              isActive: item.isActive ?? true,
-            })),
-            count: items.length,
-          };
+          let filtered = items.filter((item: any) => item.isActive !== false);
+          if (q) {
+            filtered = filtered.filter((item: any) =>
+              (item.title && item.title.toLowerCase().includes(q)) ||
+              (item.sub && item.sub.toLowerCase().includes(q)) ||
+              (item.serviceId && item.serviceId.toLowerCase().includes(q))
+            );
+          }
+          if (filtered.length > 0) {
+            return {
+              success: true,
+              data: filtered.map((item: any) => ({
+                id: item.serviceId,
+                serviceId: item.serviceId,
+                title: item.title,
+                sub: item.sub || '',
+                icon: item.icon,
+                url: item.url,
+                artwork: item.artwork || '',
+                displayOrder: item.displayOrder,
+                isActive: item.isActive ?? true,
+              })),
+              count: filtered.length,
+            };
+          }
         }
       }
+    } catch (err: any) {
+      console.warn('[Categories] getCategoryServices table query notice:', err?.message || err);
+    }
 
-      // 2. Check dynamic app_settings for category_services in database
+    // 2. Dynamic app_settings (key: category_services) in MySQL DB
+    try {
       const setting = await this.prisma.appSetting.findUnique({
         where: { key: 'category_services' }
       });
       if (setting && setting.value) {
-        try {
-          const parsed = JSON.parse(setting.value);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            let filtered = parsed;
-            if (search && search.trim() !== '') {
-              const q = search.trim().toLowerCase();
-              filtered = parsed.filter((s: any) => s.title?.toLowerCase().includes(q) || s.sub?.toLowerCase().includes(q) || s.serviceId?.toLowerCase().includes(q));
-            }
-            return {
-              success: true,
-              data: filtered,
-              count: filtered.length
-            };
+        const parsed = JSON.parse(setting.value);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          let filtered = parsed;
+          if (q) {
+            filtered = parsed.filter((s: any) =>
+              (s.title && s.title.toLowerCase().includes(q)) ||
+              (s.sub && s.sub.toLowerCase().includes(q)) ||
+              (s.serviceId && s.serviceId.toLowerCase().includes(q))
+            );
           }
-        } catch {}
+          return {
+            success: true,
+            data: filtered,
+            count: filtered.length
+          };
+        }
       }
-    } catch (dbErr) {
-      console.warn('[Categories] getCategoryServices database error:', dbErr);
+    } catch (err: any) {
+      console.warn('[Categories] app_settings query notice:', err?.message || err);
+    }
+
+    // 3. Root Categories from content_categories table in DB
+    try {
+      const rootCats = await this.prisma.contentCategory.findMany({
+        where: { parentId: null, isArchived: false },
+        orderBy: { displayOrder: 'asc' },
+        include: { translations: { include: { language: true } } }
+      });
+      if (rootCats && rootCats.length > 0) {
+        const targetLang = (lang || 'en').toLowerCase().trim();
+        const mapped = rootCats.map(cat => {
+          const trans = cat.translations.find((t: any) => t.language?.code === targetLang) || cat.translations[0];
+          return {
+            id: cat.slug,
+            serviceId: cat.slug,
+            title: trans?.title || cat.slug,
+            sub: trans?.description || '',
+            icon: 'Sparkles',
+            url: '/subcategories',
+            artwork: `/images/categories/art-${cat.slug}-trans.png`,
+            displayOrder: cat.displayOrder,
+            isActive: true
+          };
+        });
+        return {
+          success: true,
+          data: mapped,
+          count: mapped.length
+        };
+      }
+    } catch (err: any) {
+      console.warn('[Categories] content_categories fallback notice:', err?.message || err);
     }
 
     // Zero fallback / mock data: strictly return database result

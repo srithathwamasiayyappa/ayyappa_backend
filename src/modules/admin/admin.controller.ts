@@ -3070,8 +3070,8 @@ export class AdminController {
 
   @Get('category-services')
   async getCategoryServices() {
+    // 1. Query dedicated category_services table from MySQL DB
     try {
-      // 1. Query dedicated category_services table from MySQL DB
       if ((this.prisma as any).categoryService) {
         const items = await (this.prisma as any).categoryService.findMany({
           orderBy: { displayOrder: 'asc' }
@@ -3094,8 +3094,12 @@ export class AdminController {
           };
         }
       }
+    } catch (err: any) {
+      console.warn('[Admin] categoryService table query notice:', err?.message || err);
+    }
 
-      // 2. Query dynamic app_settings for category_services in MySQL DB
+    // 2. Query dynamic app_settings for category_services in MySQL DB
+    try {
       const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
       if (setting && setting.value) {
         const parsed = JSON.parse(setting.value);
@@ -3107,8 +3111,40 @@ export class AdminController {
           };
         }
       }
-    } catch (e: any) {
-      console.warn('[Admin] getCategoryServices database error:', e?.message);
+    } catch (err: any) {
+      console.warn('[Admin] app_settings query notice:', err?.message || err);
+    }
+
+    // 3. Fallback to Root Categories from content_categories table in DB
+    try {
+      const rootCats = await this.prisma.contentCategory.findMany({
+        where: { parentId: null, isArchived: false },
+        orderBy: { displayOrder: 'asc' },
+        include: { translations: true }
+      });
+      if (rootCats && rootCats.length > 0) {
+        const mapped = rootCats.map(cat => {
+          const trans = cat.translations?.[0];
+          return {
+            id: cat.slug,
+            serviceId: cat.slug,
+            title: trans?.title || cat.slug,
+            sub: trans?.description || '',
+            icon: 'Sparkles',
+            url: '/subcategories',
+            artwork: `/images/categories/art-${cat.slug}-trans.png`,
+            displayOrder: cat.displayOrder,
+            isActive: true
+          };
+        });
+        return {
+          success: true,
+          total: mapped.length,
+          data: mapped
+        };
+      }
+    } catch (err: any) {
+      console.warn('[Admin] content_categories fallback notice:', err?.message || err);
     }
 
     // Zero fallback / mock data: strictly return database result
