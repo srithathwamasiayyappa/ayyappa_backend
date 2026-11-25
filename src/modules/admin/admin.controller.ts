@@ -3074,7 +3074,7 @@ export class AdminController {
       const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
       if (setting && setting.value) {
         const parsed = JSON.parse(setting.value);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           return {
             success: true,
             total: parsed.length,
@@ -3082,15 +3082,43 @@ export class AdminController {
           };
         }
       }
-    } catch (e) {
-      console.warn('[Admin] getCategoryServices error:', e);
-    }
 
-    return {
-      success: true,
-      total: 0,
-      data: []
-    };
+      // Auto-initialize 9 sanctum devotional services into database
+      const defaultServices = [
+        { id: 'pooja', serviceId: 'pooja', title: 'Pooja Vidhanam', sub: 'Step-by-step sacred rituals', icon: 'Flame', url: '/subcategories', artwork: '/images/categories/art-pooja-trans.png', displayOrder: 1, isActive: true },
+        { id: 'stotras', serviceId: 'stotras', title: 'Divine Stotras', sub: 'Sacred stotrams & kavachas', icon: 'BookOpen', url: '/subcategories', artwork: '/images/categories/art-stotras-trans.png', displayOrder: 2, isActive: true },
+        { id: 'slokas', serviceId: 'slokas', title: 'Daily Slokas', sub: 'Daily recitation verses', icon: 'Sparkles', url: '/subcategories', artwork: '/images/categories/art-slokas-trans.png', displayOrder: 3, isActive: true },
+        { id: 'astothrams', serviceId: 'astothrams', title: 'Astothrams', sub: '108 sacred names', icon: 'ListChecks', url: '/subcategories', artwork: '/images/categories/art-astothrams-trans.png', displayOrder: 4, isActive: true },
+        { id: 'bhajans', serviceId: 'bhajans', title: 'Bhajans & Songs', sub: 'Devotional audio & lyrics', icon: 'Music', url: '/subcategories', artwork: '/images/categories/art-bhajans-trans.png', displayOrder: 5, isActive: true },
+        { id: 'harathis', serviceId: 'harathis', title: 'Harathis & Songs', sub: 'Mangala harathi vidhis', icon: 'Flame', url: '/subcategories', artwork: '/images/categories/art-harathis-trans.png', displayOrder: 6, isActive: true },
+        { id: 'panchangam', serviceId: 'panchangam', title: 'Panchangam', sub: 'Tithi, nakshatra & timings', icon: 'Calendar', url: '/panchangam', artwork: '/images/categories/art-panchangam-trans.png', displayOrder: 7, isActive: true },
+        { id: 'temples', serviceId: 'temples', title: 'Temples', sub: 'Sacred shrines directory', icon: 'Landmark', url: '/temples', artwork: '/images/categories/art-temples-trans.png', displayOrder: 8, isActive: true },
+        { id: 'festivals', serviceId: 'festivals', title: 'Festivals', sub: 'Auspicious dates & vrata', icon: 'Sun', url: '/festivals', artwork: '/images/categories/art-festivals-trans.png', displayOrder: 9, isActive: true }
+      ];
+
+      await this.prisma.appSetting.upsert({
+        where: { key: 'category_services' },
+        update: { value: JSON.stringify(defaultServices) },
+        create: {
+          key: 'category_services',
+          value: JSON.stringify(defaultServices),
+          description: 'Devotional Services Directory (9 Sanctum Categories)'
+        }
+      }).catch(() => {});
+
+      return {
+        success: true,
+        total: defaultServices.length,
+        data: defaultServices
+      };
+    } catch (e: any) {
+      console.warn('[Admin] getCategoryServices error handled safely:', e?.message);
+      return {
+        success: true,
+        total: 0,
+        data: []
+      };
+    }
   }
 
   @Get('category-services/:id')
