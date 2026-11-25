@@ -71,7 +71,7 @@ export class CategoriesController {
         }
       }
 
-      // Check dynamic app_settings for category_services
+      // Check dynamic app_settings for category_services in database
       const setting = await this.prisma.appSetting.findUnique({
         where: { key: 'category_services' }
       });
@@ -96,7 +96,7 @@ export class CategoriesController {
       console.warn('[Categories] getCategoryServices database error:', dbErr);
     }
 
-    // Strictly fetched from DB: return empty array if no data exists in database
+    // Zero fallback: strictly return database result
     return {
       success: true,
       data: [],
