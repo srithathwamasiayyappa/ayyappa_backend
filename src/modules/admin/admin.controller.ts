@@ -3317,54 +3317,85 @@ export class AdminController {
 
   @Get('deities')
   async getDeities(@Query('lang') lang?: string) {
-    const setting = await this.prisma.appSetting.findUnique({
-      where: { key: 'deities' }
-    });
+    const targetLang = (lang || '').toLowerCase().trim();
 
-    let defaultDeities: any[] = [];
+    // 1. Dedicated MySQL `deities` table
     try {
-      defaultDeities = require('./deities-five-languages.json');
-    } catch {}
+      const dbDeities: any[] = await this.prisma.$queryRawUnsafe(
+        'SELECT * FROM `deities` WHERE `is_active` = 1 ORDER BY `order_index` ASC, `id` ASC'
+      );
+      if (Array.isArray(dbDeities) && dbDeities.length > 0) {
+        const mapped = dbDeities.map((d: any) => {
+          let localizedName = d.name;
+          if (targetLang === 'te' && d.telugu_name) localizedName = d.telugu_name;
+          else if (targetLang === 'ta' && d.tamil_name) localizedName = d.tamil_name;
+          else if (targetLang === 'kn' && d.kannada_name) localizedName = d.kannada_name;
+          else if (targetLang === 'hi' && d.hindi_name) localizedName = d.hindi_name;
 
-    let deities = defaultDeities;
-    if (setting && setting.value) {
-      try {
-        const parsed = JSON.parse(setting.value);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          deities = parsed;
-        }
-      } catch {}
-    } else if (defaultDeities.length > 0) {
-      // Auto-initialize in appSetting
-      try {
-        await this.prisma.appSetting.upsert({
-          where: { key: 'deities' },
-          update: { value: JSON.stringify(defaultDeities) },
-          create: { key: 'deities', value: JSON.stringify(defaultDeities), description: 'Gods and Goddesses directory (16 Sacred Deities)' }
+          return {
+            id: d.slug || String(d.id),
+            slug: d.slug || String(d.id),
+            name: localizedName,
+            englishName: d.name,
+            teluguName: d.telugu_name || '',
+            tamilName: d.tamil_name || '',
+            kannadaName: d.kannada_name || '',
+            hindiName: d.hindi_name || '',
+            description: d.description || '',
+            category: d.category || 'popular',
+            imageUrl: d.image_url || '',
+            image: d.image_url || '',
+            isFeatured: Boolean(d.is_featured),
+            displayOrder: d.order_index ?? 0,
+            isActive: Boolean(d.is_active),
+          };
         });
-      } catch {}
+        return {
+          success: true,
+          total: mapped.length,
+          data: mapped,
+        };
+      }
+    } catch (err) {
+      console.warn('[Admin] Direct deities table query notice:', err);
     }
 
-    const targetLang = (lang || '').toLowerCase().trim();
-    const mapped = deities.map((deity: any) => {
-      const trans = deity.translations || {};
-      const loc = (targetLang && trans[targetLang]) ? trans[targetLang] : null;
-      return {
-        ...deity,
-        name: loc?.name || deity.name,
-        alternateName: loc && loc.alternateName !== undefined ? loc.alternateName : deity.alternateName,
-        vahana: loc && loc.vahana !== undefined ? loc.vahana : deity.vahana,
-        moolaMantra: loc && loc.moolaMantra !== undefined ? loc.moolaMantra : deity.moolaMantra,
-        primaryTemple: loc && loc.primaryTemple !== undefined ? loc.primaryTemple : deity.primaryTemple,
-        description: loc && loc.description !== undefined ? loc.description : deity.description,
-        translations: trans
-      };
-    });
+    // 2. MySQL app_settings table (key: 'deities')
+    try {
+      const setting = await this.prisma.appSetting.findUnique({
+        where: { key: 'deities' }
+      });
+      if (setting && setting.value) {
+        const deities = JSON.parse(setting.value);
+        if (Array.isArray(deities) && deities.length > 0) {
+          const mapped = deities.map((deity: any) => {
+            const trans = deity.translations || {};
+            const loc = (targetLang && trans[targetLang]) ? trans[targetLang] : null;
+            return {
+              ...deity,
+              name: loc?.name || deity.name,
+              alternateName: loc && loc.alternateName !== undefined ? loc.alternateName : deity.alternateName,
+              vahana: loc && loc.vahana !== undefined ? loc.vahana : deity.vahana,
+              moolaMantra: loc && loc.moolaMantra !== undefined ? loc.moolaMantra : deity.moolaMantra,
+              primaryTemple: loc && loc.primaryTemple !== undefined ? loc.primaryTemple : deity.primaryTemple,
+              description: loc && loc.description !== undefined ? loc.description : deity.description,
+              translations: trans
+            };
+          });
+          return {
+            success: true,
+            total: mapped.length,
+            data: mapped,
+          };
+        }
+      }
+    } catch {}
 
+    // Strictly return empty list - ZERO mock/fallback
     return {
       success: true,
-      total: mapped.length,
-      data: mapped
+      total: 0,
+      data: [],
     };
   }
 
