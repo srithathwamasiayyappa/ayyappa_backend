@@ -518,7 +518,61 @@ export class AdminController {
   }
 
 
-    // 4. Categories Management (Root categories: parentId == null)
+  // Synchronize dynamic category_services into content_categories root records
+  private async syncCategoryServicesToContentCategories(): Promise<void> {
+    try {
+      let services: any[] = [];
+      const sSetting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
+      if (sSetting?.value) {
+        try { services = JSON.parse(sSetting.value); } catch (_) {}
+      }
+      if (!Array.isArray(services) || services.length === 0) return;
+
+      for (const service of services) {
+        const slug = (service.serviceId || service.id || '').trim();
+        if (!slug) continue;
+
+        const existing = await this.prisma.contentCategory.findFirst({
+          where: {
+            OR: [
+              { slug: slug },
+              ...(isNaN(Number(slug)) ? [] : [{ id: Number(slug) }])
+            ]
+          },
+          include: { translations: true }
+        });
+
+        if (!existing) {
+          const title = (service.title || slug).trim();
+          const desc = (service.sub || '').trim();
+          let languages = await this.prisma.language.findMany().catch(() => []);
+          const transData = languages.length > 0
+            ? languages.map(l => ({ languageId: l.id, title, description: desc }))
+            : [
+                { languageId: 1, title, description: desc },
+                { languageId: 2, title, description: desc }
+              ];
+
+          await this.prisma.contentCategory.create({
+            data: {
+              slug: slug,
+              parentId: null,
+              displayOrder: parseInt(service.displayOrder, 10) || 0,
+              isAudio: false,
+              isArchived: false,
+              translations: {
+                create: transData
+              }
+            }
+          });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Admin] syncCategoryServicesToContentCategories notice:', err?.message || err);
+    }
+  }
+
+  // 4. Categories Management (Root categories: parentId == null)
   @Get('categories')
   async getCategories(
     @Query('page') page: string = '1',
@@ -530,6 +584,7 @@ export class AdminController {
     @Query('sortBy') sortBy: string = 'displayOrder',
     @Query('sortOrder') sortOrder: string = 'asc'
   ) {
+    await this.syncCategoryServicesToContentCategories();
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const skip = (pageNum - 1) * take;
@@ -840,6 +895,7 @@ export class AdminController {
   // 4b. Category Tree & Parents Lookup
   @Get('categories/parents')
   async getParentCategoriesLookup(@Query('lang') lang: string = 'te') {
+    await this.syncCategoryServicesToContentCategories();
     let categories: any[] = [];
     try {
       categories = await this.prisma.contentCategory.findMany({
@@ -3114,6 +3170,8 @@ export class AdminController {
       create: { key: 'category_services', value: JSON.stringify(services), description: 'Devotional Services Directory' }
     });
 
+    await this.syncCategoryServicesToContentCategories();
+
     return {
       success: true,
       message: 'Devotional service created successfully.',
@@ -3209,6 +3267,14 @@ export class AdminController {
       where: { key: 'category_services' },
       data: { value: JSON.stringify(services) }
     });
+
+    // Also soft-delete / archive in content_categories if it exists
+    try {
+      await this.prisma.contentCategory.updateMany({
+        where: { slug: id, parentId: null },
+        data: { isArchived: true }
+      });
+    } catch (_) {}
 
     return {
       success: true,
