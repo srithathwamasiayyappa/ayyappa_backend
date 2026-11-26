@@ -296,8 +296,8 @@ export class MasterService {
    * Fetch deities strictly from DB (deities table or app_settings)
    * Strictly NO mock, fake, or fallback data.
    */
-  async getDeities(lang = 'te') {
-    const targetLang = (lang || 'te').toLowerCase().trim();
+  async getDeities(lang = 'en') {
+    const targetLang = (lang || 'en').toLowerCase().trim();
 
     // 1. Direct query from dedicated MySQL `deities` table
     try {
@@ -306,11 +306,13 @@ export class MasterService {
       );
       if (Array.isArray(dbRows) && dbRows.length > 0) {
         return dbRows.map((d: any) => {
-          let localizedName = d.name;
+          let localizedName = d.name; // English by default
           if (targetLang === 'te' && d.telugu_name) localizedName = d.telugu_name;
           else if (targetLang === 'ta' && d.tamil_name) localizedName = d.tamil_name;
           else if (targetLang === 'kn' && d.kannada_name) localizedName = d.kannada_name;
           else if (targetLang === 'hi' && d.hindi_name) localizedName = d.hindi_name;
+          else if (targetLang === 'ml' && d.malayalam_name) localizedName = d.malayalam_name;
+          else if (targetLang === 'en' && d.name) localizedName = d.name;
 
           return {
             id: d.slug || String(d.id),

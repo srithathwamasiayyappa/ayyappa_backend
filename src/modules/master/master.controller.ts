@@ -69,7 +69,8 @@ export class MasterController {
     @Query('category') category?: string,
     @Query('search') search?: string,
   ) {
-    let deities = await this.masterService.getDeities(lang || 'te');
+    const targetLang = (lang || 'en').toLowerCase().trim();
+    let deities = await this.masterService.getDeities(targetLang);
     if (featured === 'true') {
       const featList = deities.filter((d: any) => d.isFeatured);
       if (featList.length > 0) deities = featList;
