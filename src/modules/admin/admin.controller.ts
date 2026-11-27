@@ -934,7 +934,31 @@ export class AdminController {
   // 4b. Category Tree & Parents Lookup
   @Get('categories/parents')
   async getParentCategoriesLookup(@Query('lang') lang: string = 'te') {
-    await this.syncCategoryServicesToContentCategories();
+    const targetLang = (lang || 'te').toLowerCase().trim();
+
+    // Canonical 9 sacred sanctum services mapping
+    const CANONICAL_MAP: { [key: string]: { canonicalKey: string; order: number; titles: { [l: string]: string } } } = {
+      'pooja': { canonicalKey: 'pooja', order: 1, titles: { te: 'పూజా విధానము', en: 'Pooja Vidhanam', kn: 'ಪೂಜಾ ವಿಧಾನ', ta: 'பூஜா விதானம்', hi: 'पूजा विधान' } },
+      'pooja-vidhanam': { canonicalKey: 'pooja', order: 1, titles: { te: 'పూజా విధానము', en: 'Pooja Vidhanam', kn: 'ಪೂಜಾ ವಿಧಾನ', ta: 'பூஜா விதானம்', hi: 'पूजा विधान' } },
+      'stotras': { canonicalKey: 'stotras', order: 2, titles: { te: 'దివ్య స్తోత్రాలు', en: 'Divine Stotras', kn: 'ದಿವ್ಯ ಸ್ತೋತ್ರಗಳು', ta: 'திவ்ய ஸ்தோத்திரங்கள்', hi: 'दिव्य स्तोत्र' } },
+      'divine-stotras': { canonicalKey: 'stotras', order: 2, titles: { te: 'దివ్య స్తోత్రాలు', en: 'Divine Stotras', kn: 'ದಿವ್ಯ ಸ್ತೋತ್ರಗಳು', ta: 'திவ்ய ஸ்தோத்திரங்கள்', hi: 'दिव्य स्तोत्र' } },
+      'slokas': { canonicalKey: 'slokas', order: 3, titles: { te: 'నిత్య శ్లోకాలు', en: 'Daily Slokas', kn: 'ನಿತ್ಯ ಶ್ಲೋಕಗಳು', ta: 'நித்ய ஸ்லோகங்கள்', hi: 'नित्य श्लोक' } },
+      'daily-slokas': { canonicalKey: 'slokas', order: 3, titles: { te: 'నిత్య శ్లోకాలు', en: 'Daily Slokas', kn: 'ನಿತ್ಯ ಶ್ಲೋಕಗಳು', ta: 'நித்ய ஸ்லோகங்கள்', hi: 'नित्य श्लोक' } },
+      'songs': { canonicalKey: 'songs', order: 4, titles: { te: 'భజనలు & కీర్తనలు', en: 'Bhajans & Songs', kn: 'ಭಜನೆಗಳು & ಕೀರ್ತನೆಗಳು', ta: 'பஜனைகள் & பாடல்கள்', hi: 'भजन एवं कीर्तन' } },
+      'bhajans': { canonicalKey: 'songs', order: 4, titles: { te: 'భజనలు & కీర్తనలు', en: 'Bhajans & Songs', kn: 'ಭಜನೆಗಳು & ಕೀರ್ತನೆಗಳು', ta: 'பஜனைகள் & பாடல்கள்', hi: 'भजन एवं कीर्तन' } },
+      'live-streams': { canonicalKey: 'live-streams', order: 5, titles: { te: 'ప్రత్యక్ష దర్శనం', en: 'Live Darshan', kn: 'ಲೈವ್ ದರ್ಶನ', ta: 'நேரலை தரிசனம்', hi: 'लाइव दर्शन' } },
+      'live-darshan': { canonicalKey: 'live-streams', order: 5, titles: { te: 'ప్రత్యక్ష దర్శనం', en: 'Live Darshan', kn: 'ಲೈವ್ ದರ್ಶನ', ta: 'நேரலை தரிசனம்', hi: 'लाइव दर्शन' } },
+      'darshan': { canonicalKey: 'live-streams', order: 5, titles: { te: 'ప్రత్యక్ష దర్శనం', en: 'Live Darshan', kn: 'ಲೈವ್ ದರ್ಶನ', ta: 'நேரலை தரிசனம்', hi: 'लाइव दर्शन' } },
+      'panchangam': { canonicalKey: 'panchangam', order: 6, titles: { te: 'పంచాంగం', en: 'Panchangam', kn: 'ಪಂಚಾಂಗ', ta: 'பஞ்சாங்கம்', hi: 'पंचांग' } },
+      'festivals': { canonicalKey: 'festivals', order: 7, titles: { te: 'ఆలయ ఉత్సవాలు', en: 'Temple Festivals', kn: 'ದೇವಾಲಯ ಉತ್ಸವಗಳು', ta: 'திருவிழாக்கள்', hi: 'मंदिर उत्सव' } },
+      'temple-festivals': { canonicalKey: 'festivals', order: 7, titles: { te: 'ఆలయ ఉత్సవాలు', en: 'Temple Festivals', kn: 'ದೇವಾಲಯ ಉತ್ಸವಗಳು', ta: 'திருவிழாக்கள்', hi: 'मंदिर उत्सव' } },
+      'temples': { canonicalKey: 'temples', order: 8, titles: { te: 'పుణ్యక్షేత్రాలు', en: 'Sacred Temples', kn: 'ಪುಣ್ಯಕ್ಷೇತ್ರಗಳು', ta: 'புண்ணிய தலங்கள்', hi: 'पुण्य क्षेत्र व मंदिर' } },
+      'sacred-temples': { canonicalKey: 'temples', order: 8, titles: { te: 'పుణ్యక్షేత్రాలు', en: 'Sacred Temples', kn: 'ಪುಣ್ಯಕ್ಷೇತ್ರಗಳು', ta: 'புண்ணிய தலங்கள்', hi: 'पुण्य क्षेत्र व मंदिर' } },
+      'donations': { canonicalKey: 'donations', order: 9, titles: { te: 'అన్నదాన సేవ', en: 'Annadanam Seva', kn: 'ಅನ್ನದಾನ ಸೇವೆ', ta: 'அன்னதான சேவை', hi: 'अन्नदान सेवा' } },
+      'annadanam-seva': { canonicalKey: 'donations', order: 9, titles: { te: 'అన్నదాన సేవ', en: 'Annadanam Seva', kn: 'ಅನ್ನದಾನ ಸೇವೆ', ta: 'அன்னதான சேவை', hi: 'अन्नदान सेवा' } },
+      'annadanam': { canonicalKey: 'donations', order: 9, titles: { te: 'అన్నదాన సేవ', en: 'Annadanam Seva', kn: 'ಅನ್ನದಾನ ಸೇವೆ', ta: 'அன்னதான சேவை', hi: 'अन्नदान सेवा' } }
+    };
+
     let categories: any[] = [];
     try {
       categories = await this.prisma.contentCategory.findMany({
@@ -948,30 +972,52 @@ export class AdminController {
       console.warn('[Admin] Parent categories lookup error:', e);
     }
 
-    if (!categories || categories.length === 0) {
-      // Fallback standard 9 sanctum parent categories
-      return [
-        { id: 1, slug: 'pooja', title: 'Pooja Vidhanam', parentId: null },
-        { id: 2, slug: 'stotras', title: 'Divine Stotras', parentId: null },
-        { id: 3, slug: 'slokas', title: 'Daily Slokas', parentId: null },
-        { id: 4, slug: 'songs', title: 'Bhajans & Songs', parentId: null },
-        { id: 5, slug: 'live-streams', title: 'Live Darshan', parentId: null },
-        { id: 6, slug: 'panchangam', title: 'Panchangam', parentId: null },
-        { id: 7, slug: 'festivals', title: 'Temple Festivals', parentId: null },
-        { id: 8, slug: 'temples', title: 'Sacred Temples', parentId: null },
-        { id: 9, slug: 'donations', title: 'Annadanam Seva', parentId: null },
-      ];
+    const seenCanonicals = new Set<string>();
+    const result: any[] = [];
+
+    if (categories && categories.length > 0) {
+      for (const c of categories) {
+        const slug = (c.slug || '').toLowerCase().trim();
+        // Ignore calendar / dates non-category rows
+        if (slug.includes('dates') || slug.includes('nakshatra') || slug.includes('opening')) continue;
+
+        const canonical = CANONICAL_MAP[slug];
+        if (!canonical) continue;
+        if (seenCanonicals.has(canonical.canonicalKey)) continue;
+        seenCanonicals.add(canonical.canonicalKey);
+
+        const match = c.translations?.find((t: any) => t.language?.code === targetLang) || c.translations?.[0];
+        const displayTitle = match?.title || canonical.titles[targetLang] || canonical.titles['en'] || c.slug;
+
+        result.push({
+          id: c.id,
+          slug: c.slug,
+          title: displayTitle,
+          parentId: c.parentId,
+          order: canonical.order
+        });
+      }
     }
 
-    return categories.map(c => {
-      const match = c.translations?.find((t: any) => t.language?.code === lang) || c.translations?.[0];
-      return {
-        id: c.id,
-        slug: c.slug,
-        title: match ? match.title : c.slug,
-        parentId: c.parentId
-      };
-    });
+    // Ensure all 9 canonical sanctum parent categories exist
+    const missingKeys = ['pooja', 'stotras', 'slokas', 'songs', 'live-streams', 'panchangam', 'festivals', 'temples', 'donations'];
+    for (const mKey of missingKeys) {
+      if (!seenCanonicals.has(mKey)) {
+        const info = CANONICAL_MAP[mKey];
+        if (info) {
+          result.push({
+            id: info.order,
+            slug: mKey,
+            title: info.titles[targetLang] || info.titles['en'] || mKey,
+            parentId: null,
+            order: info.order
+          });
+        }
+      }
+    }
+
+    result.sort((a, b) => (a.order || 0) - (b.order || 0));
+    return result;
   }
 
   // 5. Subcategories CRUD (Items based on categories with parent filtering)
