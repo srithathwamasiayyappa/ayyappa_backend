@@ -1162,7 +1162,8 @@ export class AdminController {
           orderBy: { displayOrder: 'asc' },
           include: {
             parent: { include: { translations: true } },
-            translations: { include: { language: true } }
+            translations: { include: { language: true } },
+            _count: { select: { devotionalContents: true } }
           }
         })
       ]);
@@ -1213,6 +1214,7 @@ export class AdminController {
           parentTitle: parentPref ? parentPref.title : pSlug,
           displayOrder: cat.displayOrder,
           isAudio: cat.isAudio,
+          typesCount: cat._count?.devotionalContents ?? 0,
           deityId,
           status: subStatus,
           isActive: subStatus === 'active',
@@ -1381,6 +1383,7 @@ export class AdminController {
             parentSlug: pSlug,
             displayOrder: cat.displayOrder,
             isAudio: cat.isAudio,
+            typesCount: contents.length,
             isSubcategory: Boolean(cat.parentId),
             status: catStatus,
             isActive: catStatus === 'active',
