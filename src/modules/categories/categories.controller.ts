@@ -1,6 +1,75 @@
 import { Controller, Get, Post, Put, Param, Query, Body, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 
+const SERVICE_LOCALIZATIONS: Record<string, Record<string, { title: string; sub: string }>> = {
+  te: {
+    pooja: { title: 'పూజా విధానము', sub: 'దశలవారీగా పవిత్ర పూజా విధానాలు' },
+    stotras: { title: 'దివ్య స్తోత్రాలు', sub: 'పవిత్ర స్తోత్రాలు & కవచాలు' },
+    slokas: { title: 'నిత్య శ్లోకాలు', sub: 'ధ్యానం & ప్రార్థన శ్లోకాలు' },
+    bhajans: { title: 'భజనలు & కీర్తనలు', sub: 'భక్తి కీర్తనలు & గీతాలు' },
+    darshan: { title: 'ప్రత్యక్ష దర్శనం', sub: 'నిత్య ఆలయ ప్రత్యక్ష ప్రసారాలు' },
+    panchangam: { title: 'పంచాంగం', sub: 'శుభ సమయాలు & ముహూర్తాలు' },
+    festivals: { title: 'ఆలయ ఉత్సవాలు', sub: 'వార్షిక ఉత్సవాలు & వేడుకలు' },
+    temples: { title: 'పుణ్యక్షేత్రాలు', sub: 'ప్రసిద్ధ క్షేత్రాలు & దర్శనీయ స్థలాలు' },
+    annadanam: { title: 'అన్నదాన సేవ', sub: 'నిత్యాన్నదానం & సమర్పణ' },
+  },
+  kn: {
+    pooja: { title: 'ಪೂಜಾ ವಿಧಾನ', sub: 'ಹಂತ-ಹಂತದ ಪವಿತ್ರ ವಿಧಿವಿಧಾನಗಳು' },
+    stotras: { title: 'ದಿವ್ಯ ಸ್ತೋತ್ರಗಳು', sub: 'ಪವಿತ್ರ ಸ್ತೋತ್ರಗಳು & ಕವಚಗಳು' },
+    slokas: { title: 'ನಿತ್ಯ ಶ್ಲೋಕಗಳು', sub: 'ಧ್ಯಾನ & ಪ್ರಾರ್ಥನಾ ಶ್ಲೋಕಗಳು' },
+    bhajans: { title: 'ಭಜನೆಗಳು & ಕೀರ್ತನೆಗಳು', sub: 'ಭಕ್ತಿ ಗೀತೆಗಳು & ಸಂಕೀರ್ತನೆ' },
+    darshan: { title: 'ಲೈವ್ ದರ್ಶನ', sub: 'ದೈನಂದಿನ ದೇವಾಲಯ ನೇರಪ್ರಸಾರ' },
+    panchangam: { title: 'ಪಂಚಾಂಗ', sub: 'ಶುಭ ಮುಹೂರ್ತಗಳು & ತಿಥಿಗಳು' },
+    festivals: { title: 'ದೇವಾಲಯ ಉತ್ಸವಗಳು', sub: 'ವಾರ್ಷಿಕ ಹಬ್ಬಗಳು & ಆಚರಣೆಗಳು' },
+    temples: { title: 'ಪುಣ್ಯಕ್ಷೇತ್ರಗಳು', sub: 'ಪವಿತ್ರ ದೇವಾಲಯಗಳು & ಯಾತ್ರೆಗಳು' },
+    annadanam: { title: 'ಅನ್ನದಾನ ಸೇವೆ', sub: 'ಅನ್ನದಾನ ಅರ್ಪಣೆ & ಸೇವೆ' },
+  },
+  ta: {
+    pooja: { title: 'பூஜா விதானம்', sub: 'படிப்படியான புனித வழிபாட்டு முறைகள்' },
+    stotras: { title: 'திவ்ய ஸ்தோத்திரங்கள்', sub: 'புனித துதிகள் & கவசங்கள்' },
+    slokas: { title: 'நித்ய ஸ்லோகங்கள்', sub: 'தியானம் & பிரார்த்தனை சுலோகங்கள்' },
+    bhajans: { title: 'பஜனைகள் & பாடல்கள்', sub: 'பக்திப் பாடல்கள் & கீர்த்தனைகள்' },
+    darshan: { title: 'நேரலை தரிசனம்', sub: 'தினசரி கோயில் நேரலை ஒளிபரப்பு' },
+    panchangam: { title: 'பஞ்சாங்கம்', sub: 'சுப நேரங்கள் & திதிகள்' },
+    festivals: { title: 'திருவிழாக்கள்', sub: 'ஆண்டு திருவிழாக்கள் & கொண்டாட்டங்கள்' },
+    temples: { title: 'புண்ணிய தலங்கள்', sub: 'புனித கோயில்கள் & யாத்திரைகள்' },
+    annadanam: { title: 'அன்னதான சேவை', sub: 'அன்னதான அர்ப்பணிப்பு & சேவை' },
+  },
+  hi: {
+    pooja: { title: 'पूजा विधान', sub: 'चरणबद्ध पवित्र अनुष्ठान एवं पूजा' },
+    stotras: { title: 'दिव्य स्तोत्र', sub: 'पवित्र स्तोत्र एवं मंत्र' },
+    slokas: { title: 'नित्य श्लोक', sub: 'ध्यान एवं प्रार्थना श्लोक' },
+    bhajans: { title: 'भजन एवं कीर्तन', sub: 'भक्ति संगीत एवं आरतियां' },
+    darshan: { title: 'लाइव दर्शन', sub: 'दैनिक मंदिर लाइव प्रसारण' },
+    panchangam: { title: 'पंचांग', sub: 'शुभ मुहूर्त एवं तिथियां' },
+    festivals: { title: 'मंदिर उत्सव', sub: 'वार्षिक उत्सव एवं पर्व' },
+    temples: { title: 'पुण्य क्षेत्र व मंदिर', sub: 'पवित्र तीर्थ स्थल एवं धाम' },
+    annadanam: { title: 'अन्नदान सेवा', sub: 'भोजन सेवा एवं दान' },
+  },
+  ml: {
+    pooja: { title: 'പൂജാ വിധി', sub: 'ഘട്ടം ഘട്ടമായുള്ള വിശുദ്ധ കർമ്മങ്ങൾ' },
+    stotras: { title: 'ദിവ്യ സ്തോത്രങ്ങൾ', sub: 'വിശുദ്ധ സ്തോത്രങ്ങൾ & കീർത്തനങ്ങൾ' },
+    slokas: { title: 'നിത്യ ശ്ലോകങ്ങൾ', sub: 'പ്രാർത്ഥനാ ശ്ലോകങ്ങൾ' },
+    bhajans: { title: 'ഭജനകളും ഗാനങ്ങളും', sub: 'ഭക്തിഗാനങ്ങൾ' },
+    darshan: { title: 'തത്സമയ ദർശനം', sub: 'ദിവസേനയുള്ള തത്സമയ സംപ്രേക്ഷണം' },
+    panchangam: { title: 'പഞ്ചാംഗം', sub: 'ശുഭ മുഹൂർത്തങ്ങൾ' },
+    festivals: { title: 'ക്ഷേത്രോത്സവങ്ങൾ', sub: 'വാർഷിക ആഘോഷങ്ങൾ' },
+    temples: { title: 'പുണ്യക്ഷേത്രങ്ങൾ', sub: 'തീർത്ഥാടന കേന്ദ്രങ്ങൾ' },
+    annadanam: { title: 'അന്നദാന സേവ', sub: 'അന്നദാന സമർപ്പണം' },
+  },
+  en: {
+    pooja: { title: 'Pooja Vidhanam', sub: 'Step-by-step sacred rituals' },
+    stotras: { title: 'Divine Stotras', sub: 'Sacred Hymns & Chants' },
+    slokas: { title: 'Daily Slokas', sub: 'Verses for Meditation' },
+    bhajans: { title: 'Bhajans & Songs', sub: 'Devotional Melodies' },
+    darshan: { title: 'Live Darshan', sub: 'Daily Temple Streams' },
+    panchangam: { title: 'Panchangam', sub: 'Auspicious Timings' },
+    festivals: { title: 'Temple Festivals', sub: 'Annual Celebrations' },
+    temples: { title: 'Sacred Temples', sub: 'Shrines & Pilgrimages' },
+    annadanam: { title: 'Annadanam Seva', sub: 'Meal Offering & Seva' },
+  },
+};
+
 @Controller('categories')
 export class CategoriesController {
   constructor(private readonly prisma: PrismaService) {}
@@ -140,6 +209,67 @@ export class CategoriesController {
   @Get('services')
   async getCategoryServices(@Query('search') search?: string, @Query('lang') lang?: string) {
     const q = search && search.trim() !== '' ? search.trim().toLowerCase() : null;
+    const targetLang = (lang || 'en').toLowerCase().trim();
+
+    // Load category translations from content_categories table in DB
+    let dbCategoryTranslations: Record<string, { title: string; desc: string }> = {};
+    try {
+      const rootCats = await this.prisma.contentCategory.findMany({
+        where: { parentId: null, isArchived: false },
+        include: { translations: { include: { language: true } } },
+      });
+      if (rootCats && rootCats.length > 0) {
+        rootCats.forEach((cat) => {
+          const trans = cat.translations.find((t: any) => t.language?.code === targetLang) || cat.translations[0];
+          if (trans && trans.title) {
+            dbCategoryTranslations[cat.slug] = {
+              title: trans.title,
+              desc: trans.description || '',
+            };
+          }
+        });
+      }
+    } catch (_) {}
+
+    // Load custom translations from app_settings if available
+    let dbSettingsTranslations: Record<string, { title: string; sub: string }> = {};
+    try {
+      const sKey = `category_services_${targetLang}`;
+      const sSetting = await this.prisma.appSetting.findUnique({ where: { key: sKey } });
+      if (sSetting && sSetting.value) {
+        const parsed = JSON.parse(sSetting.value);
+        if (parsed && typeof parsed === 'object') {
+          dbSettingsTranslations = parsed;
+        }
+      }
+    } catch (_) {}
+
+    const resolveItemTitleAndSub = (serviceId: string, origTitle: string, origSub: string) => {
+      const sId = (serviceId || '').toLowerCase().trim();
+      // 1. DB app_settings custom overrides
+      if (dbSettingsTranslations[sId]?.title) {
+        return {
+          title: dbSettingsTranslations[sId].title,
+          sub: dbSettingsTranslations[sId].sub || origSub || '',
+        };
+      }
+      // 2. DB content_categories translations
+      const matchedCat = Object.keys(dbCategoryTranslations).find((k) => k === sId || k.startsWith(sId) || sId.startsWith(k));
+      if (matchedCat && dbCategoryTranslations[matchedCat]?.title) {
+        return {
+          title: dbCategoryTranslations[matchedCat].title,
+          sub: SERVICE_LOCALIZATIONS[targetLang]?.[sId]?.sub || origSub || '',
+        };
+      }
+      // 3. Multi-language localization dictionary
+      if (SERVICE_LOCALIZATIONS[targetLang]?.[sId]) {
+        return {
+          title: SERVICE_LOCALIZATIONS[targetLang][sId].title,
+          sub: SERVICE_LOCALIZATIONS[targetLang][sId].sub,
+        };
+      }
+      return { title: origTitle, sub: origSub || '' };
+    };
 
     // 1. Dedicated category_services table from DB
     try {
@@ -149,29 +279,36 @@ export class CategoriesController {
         });
 
         if (items && items.length > 0) {
-          let filtered = items.filter((item: any) => item.isActive !== false);
-          if (q) {
-            filtered = filtered.filter((item: any) =>
-              (item.title && item.title.toLowerCase().includes(q)) ||
-              (item.sub && item.sub.toLowerCase().includes(q)) ||
-              (item.serviceId && item.serviceId.toLowerCase().includes(q))
-            );
-          }
-          if (filtered.length > 0) {
-            return {
-              success: true,
-              data: filtered.map((item: any) => ({
+          let mapped = items
+            .filter((item: any) => item.isActive !== false)
+            .map((item: any) => {
+              const localized = resolveItemTitleAndSub(item.serviceId, item.title, item.sub);
+              return {
                 id: item.serviceId,
                 serviceId: item.serviceId,
-                title: item.title,
-                sub: item.sub || '',
+                title: localized.title,
+                sub: localized.sub,
                 icon: item.icon || 'Sparkles',
                 url: item.url || '/subcategories',
                 artwork: item.artwork || item.image || '',
                 displayOrder: item.displayOrder,
                 isActive: item.isActive ?? true,
-              })),
-              count: filtered.length,
+              };
+            });
+
+          if (q) {
+            mapped = mapped.filter((item: any) =>
+              (item.title && item.title.toLowerCase().includes(q)) ||
+              (item.sub && item.sub.toLowerCase().includes(q)) ||
+              (item.serviceId && item.serviceId.toLowerCase().includes(q))
+            );
+          }
+
+          if (mapped.length > 0) {
+            return {
+              success: true,
+              data: mapped,
+              count: mapped.length,
             };
           }
         }
