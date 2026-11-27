@@ -374,6 +374,74 @@ export class CategoriesController {
 
     // Apply status filter if provided
     let finalItems = allItems;
+
+    // Attach dynamic subcategoriesCount from MySQL DB before pagination
+    try {
+      const allSubs = await this.prisma.contentCategory.findMany({
+        where: { parentId: { not: null }, isArchived: false },
+        select: { id: true, slug: true, parentId: true }
+      });
+
+      const rootFamilyMap: { [id: number]: string } = {
+        113: 'pooja', 25: 'pooja', 120: 'pooja', 130: 'pooja', 26: 'pooja', 27: 'pooja', 28: 'pooja', 3: 'pooja', 117: 'pooja', 7: 'pooja', 6: 'pooja', 122: 'pooja', 229: 'pooja',
+        114: 'stotras', 21: 'stotras', 52: 'stotras', 4: 'stotras',
+        115: 'slokas',
+        116: 'bhajans', 2311: 'bhajans', 11: 'bhajans', 93: 'bhajans',
+        2312: 'darshan',
+        2313: 'festivals',
+        2314: 'temples',
+        2315: 'annadanam'
+      };
+
+      const countsMap: Record<string, number> = {
+        pooja: 0,
+        stotras: 0,
+        slokas: 0,
+        bhajans: 0,
+        darshan: 0,
+        panchangam: 0,
+        festivals: 0,
+        temples: 0,
+        annadanam: 0
+      };
+
+      for (const item of allSubs) {
+        const pid = Number(item.parentId);
+        const slug = (item.slug || '').toLowerCase();
+        if (rootFamilyMap[pid]) {
+          countsMap[rootFamilyMap[pid]] = (countsMap[rootFamilyMap[pid]] || 0) + 1;
+        } else if (pid === 113 || slug.includes('pooja') || slug.includes('vratham')) {
+          countsMap['pooja'] = (countsMap['pooja'] || 0) + 1;
+        } else if (pid === 114 || slug.includes('stotra') || slug.includes('ashtottar')) {
+          countsMap['stotras'] = (countsMap['stotras'] || 0) + 1;
+        } else if (pid === 115 || slug.includes('sloka')) {
+          countsMap['slokas'] = (countsMap['slokas'] || 0) + 1;
+        } else if (pid === 116 || pid === 2311 || slug.includes('song') || slug.includes('bhajan') || slug.includes('gosha') || slug.includes('harathi')) {
+          countsMap['bhajans'] = (countsMap['bhajans'] || 0) + 1;
+        } else if (pid === 2312 || slug.includes('darshan') || slug.includes('stream')) {
+          countsMap['darshan'] = (countsMap['darshan'] || 0) + 1;
+        } else if (pid === 6 || slug.includes('panchang')) {
+          countsMap['panchangam'] = (countsMap['panchangam'] || 0) + 1;
+        } else if (pid === 2313 || slug.includes('festiv')) {
+          countsMap['festivals'] = (countsMap['festivals'] || 0) + 1;
+        } else if (pid === 2314 || slug.includes('temple')) {
+          countsMap['temples'] = (countsMap['temples'] || 0) + 1;
+        } else if (pid === 2315 || slug.includes('annadan') || slug.includes('donat')) {
+          countsMap['annadanam'] = (countsMap['annadanam'] || 0) + 1;
+        }
+      }
+      countsMap['songs'] = countsMap['bhajans'];
+      countsMap['live-streams'] = countsMap['darshan'];
+      countsMap['donations'] = countsMap['annadanam'];
+
+      for (const s of finalItems) {
+        const k = (s.serviceId || s.id || '').toLowerCase();
+        s.subcategoriesCount = countsMap[k] ?? 0;
+      }
+    } catch (e) {
+      console.warn('[Categories] Failed to compute subcategoriesCount:', e);
+    }
+
     if (status && status !== 'all') {
       if (status === 'active') {
         finalItems = finalItems.filter((i: any) => i.isActive !== false);
