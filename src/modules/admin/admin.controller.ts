@@ -755,6 +755,24 @@ export class AdminController {
       } catch (_) {}
     }
 
+    const rawDeity = (body as any).deityId || (body as any).deity;
+    if (rawDeity) {
+      try {
+        const deitySetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_deities' } });
+        let map: Record<string, string> = {};
+        if (deitySetting && deitySetting.value) {
+          try { map = JSON.parse(deitySetting.value); } catch {}
+        }
+        map[String(created.id)] = String(rawDeity).trim();
+        map[created.slug] = String(rawDeity).trim();
+        await this.prisma.appSetting.upsert({
+          where: { key: 'subcategory_deities' },
+          update: { value: JSON.stringify(map) },
+          create: { key: 'subcategory_deities', value: JSON.stringify(map), description: 'Subcategory Deity Association Map' }
+        });
+      } catch (_) {}
+    }
+
     return { success: true, data: { id: String(created.id), ...body } };
   }
 
@@ -798,6 +816,27 @@ export class AdminController {
         });
       } catch (err) {
         console.warn('Could not save subcategory image:', err);
+      }
+    }
+
+    const rawDeity = (body as any).deityId || (body as any).deity;
+    if (rawDeity) {
+      try {
+        const deitySetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_deities' } });
+        let map: Record<string, string> = {};
+        if (deitySetting && deitySetting.value) {
+          try { map = JSON.parse(deitySetting.value); } catch {}
+        }
+        map[String(numId)] = String(rawDeity).trim();
+        map[existing.slug] = String(rawDeity).trim();
+        if (body.slug && body.slug !== existing.slug) map[body.slug] = String(rawDeity).trim();
+        await this.prisma.appSetting.upsert({
+          where: { key: 'subcategory_deities' },
+          update: { value: JSON.stringify(map) },
+          create: { key: 'subcategory_deities', value: JSON.stringify(map), description: 'Subcategory Deity Association Map' }
+        });
+      } catch (err) {
+        console.warn('Could not save subcategory deity association:', err);
       }
     }
 
@@ -1052,9 +1091,14 @@ export class AdminController {
 
     if (items.length > 0) {
       let customImages: Record<string, string> = {};
+      let customDeities: Record<string, string> = {};
       try {
-        const imgSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+        const [imgSetting, deitySetting] = await Promise.all([
+          this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } }),
+          this.prisma.appSetting.findUnique({ where: { key: 'subcategory_deities' } })
+        ]);
         if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
+        if (deitySetting && deitySetting.value) customDeities = JSON.parse(deitySetting.value);
       } catch (_) {}
 
       const totalPages = Math.ceil(totalRecords / take);
@@ -1063,6 +1107,7 @@ export class AdminController {
         const parentPref = cat.parent?.translations?.find((t: any) => t.languageId === preferred?.languageId) || cat.parent?.translations?.[0];
         const pSlug = cat.parent?.slug || 'pooja';
         const customImg = customImages[String(cat.id)] || customImages[cat.slug];
+        const deityId = customDeities[String(cat.id)] || customDeities[cat.slug] || 'ayyappa';
 
         // Format clean title if not in DB translations
         const titleFormatted = cat.slug
@@ -1083,6 +1128,7 @@ export class AdminController {
           parentTitle: parentPref ? parentPref.title : pSlug,
           displayOrder: cat.displayOrder,
           isAudio: cat.isAudio,
+          deityId,
           imageUrl: customImg || resolveCategoryCardArtwork(cat.slug, finalTitle, pSlug, cat.displayOrder),
           image: customImg || resolveCategoryCardArtwork(cat.slug, finalTitle, pSlug, cat.displayOrder),
           createdAt: cat.createdAt
@@ -1126,9 +1172,14 @@ export class AdminController {
     const where: any = isNum ? { id: Number(id) } : { slug: id };
 
     let customImages: Record<string, string> = {};
+    let customDeities: Record<string, string> = {};
     try {
-      const imgSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } });
+      const [imgSetting, deitySetting] = await Promise.all([
+        this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } }),
+        this.prisma.appSetting.findUnique({ where: { key: 'subcategory_deities' } })
+      ]);
       if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
+      if (deitySetting && deitySetting.value) customDeities = JSON.parse(deitySetting.value);
     } catch (_) {}
 
     try {
@@ -1230,6 +1281,7 @@ export class AdminController {
             displayOrder: cat.displayOrder,
             isAudio: cat.isAudio,
             isSubcategory: Boolean(cat.parentId),
+            deityId: customDeities[String(cat.id)] || customDeities[cat.slug] || 'ayyappa',
             imageUrl: customImg || resolveCategoryCardArtwork(cat.slug, preferred ? preferred.title : cat.slug, pSlug, cat.displayOrder),
             image: customImg || resolveCategoryCardArtwork(cat.slug, preferred ? preferred.title : cat.slug, pSlug, cat.displayOrder),
             translations: allTranslations,
