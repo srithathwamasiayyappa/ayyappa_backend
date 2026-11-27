@@ -295,7 +295,6 @@ export class CategoriesController {
                 serviceId: item.serviceId,
                 title: localized.title,
                 sub: localized.sub,
-                icon: item.icon || 'Sparkles',
                 url: item.url || '/subcategories',
                 artwork: item.artwork || item.image || '',
                 displayOrder: item.displayOrder,
@@ -359,7 +358,6 @@ export class CategoriesController {
             serviceId: cat.slug,
             title: trans?.title || cat.slug,
             sub: trans?.description || '',
-            icon: 'Sparkles',
             url: '/subcategories',
             artwork: '',
             displayOrder: cat.displayOrder,
@@ -461,6 +459,10 @@ export class CategoriesController {
       pagedData = finalItems.slice(startIndex, startIndex + limitNum);
     }
 
+    pagedData.forEach((item: any) => {
+      delete item.icon;
+    });
+
     return {
       success: true,
       data: pagedData,
@@ -487,6 +489,7 @@ export class CategoriesController {
         message: `Devotional service '${id}' not found.`,
       };
     }
+    delete service.icon;
     return {
       success: true,
       data: service,

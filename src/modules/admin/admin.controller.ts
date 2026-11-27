@@ -690,7 +690,6 @@ export class AdminController {
         description: preferred?.description || catSub,
         imageUrl: catArtwork,
         artwork: catArtwork,
-        icon: sInfo.icon || 'Sparkles',
         subcategoriesCount: subCount,
         devotionalCount: devCount,
         createdAt: cat.createdAt,
@@ -3144,7 +3143,6 @@ export class AdminController {
             serviceId: item.serviceId,
             title: item.title,
             sub: item.sub || '',
-            icon: item.icon,
             url: item.url,
             artwork: item.artwork || '',
             displayOrder: item.displayOrder,
@@ -3187,7 +3185,6 @@ export class AdminController {
               serviceId: cat.slug,
               title: trans?.title || cat.slug,
               sub: trans?.description || '',
-              icon: 'Sparkles',
               url: '/subcategories',
               artwork: `/images/categories/art-${cat.slug}-trans.png`,
               displayOrder: cat.displayOrder,
@@ -3296,6 +3293,10 @@ export class AdminController {
       pagedData = filtered.slice(startIndex, startIndex + limitNum);
     }
 
+    pagedData.forEach(item => {
+      delete item.icon;
+    });
+
     return {
       success: true,
       total: totalCount,
@@ -3316,6 +3317,7 @@ export class AdminController {
     if (!service) {
       return { success: false, statusCode: 404, message: 'Devotional service not found.' };
     }
+    delete service.icon;
     return { success: true, data: service };
   }
 
@@ -3344,17 +3346,17 @@ export class AdminController {
       finalArtwork = this.saveBase64Image(finalArtwork, 'service');
     }
 
-    const newService = {
+    const newService: any = {
       id: serviceId,
       serviceId: serviceId,
       title: body.title.trim(),
       sub: body.sub?.trim() || '',
-      icon: body.icon?.trim() || 'Sparkles',
       url: body.url?.trim() || `/${serviceId}`,
       artwork: finalArtwork,
       displayOrder: parseInt(body.displayOrder, 10) || (services.length + 1),
       isActive: body.isActive !== undefined ? Boolean(body.isActive) : true
     };
+    delete newService.icon;
     services.push(newService);
 
     await this.prisma.appSetting.upsert({
@@ -3389,8 +3391,8 @@ export class AdminController {
 
     if (body.title) services[index].title = body.title.trim();
     if (body.sub !== undefined) services[index].sub = body.sub.trim();
-    if (body.icon) services[index].icon = body.icon.trim();
     if (body.url) services[index].url = body.url.trim();
+    delete services[index].icon;
     if (body.artwork !== undefined) {
       let finalArt = body.artwork.trim();
       if (finalArt.startsWith('data:image/')) {
