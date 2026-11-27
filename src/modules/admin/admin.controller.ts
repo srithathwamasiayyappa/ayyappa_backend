@@ -1163,7 +1163,7 @@ export class AdminController {
           include: {
             parent: { include: { translations: true } },
             translations: { include: { language: true } },
-            _count: { select: { devotionalContents: true } }
+            _count: { select: { devotionalContents: true, subcategories: true } }
           }
         })
       ]);
@@ -1204,6 +1204,12 @@ export class AdminController {
           ? preferred.title
           : titleFormatted;
 
+        const devCount = cat._count?.devotionalContents ?? 0;
+        const childTypesCount = cat._count?.subcategories ?? 0;
+        const combinedTypesCount = devCount > 0 && childTypesCount > 0
+          ? (devCount + childTypesCount)
+          : (devCount || childTypesCount || 0);
+
         return {
           id: String(cat.id),
           slug: cat.slug,
@@ -1214,7 +1220,7 @@ export class AdminController {
           parentTitle: parentPref ? parentPref.title : pSlug,
           displayOrder: cat.displayOrder,
           isAudio: cat.isAudio,
-          typesCount: cat._count?.devotionalContents ?? 0,
+          typesCount: combinedTypesCount,
           deityId,
           status: subStatus,
           isActive: subStatus === 'active',
@@ -1383,7 +1389,7 @@ export class AdminController {
             parentSlug: pSlug,
             displayOrder: cat.displayOrder,
             isAudio: cat.isAudio,
-            typesCount: contents.length,
+            typesCount: (contents.length || 0) + (subcategories.length || 0),
             isSubcategory: Boolean(cat.parentId),
             status: catStatus,
             isActive: catStatus === 'active',
@@ -1415,7 +1421,7 @@ export class AdminController {
     @Query('status') status?: string
   ) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
-    const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const take = Math.min(5000, Math.max(1, parseInt(limit, 10) || 20));
     const skip = (pageNum - 1) * take;
 
     const where: any = {};
