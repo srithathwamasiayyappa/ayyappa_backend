@@ -989,12 +989,26 @@ export class AdminController {
         const match = c.translations?.find((t: any) => t.language?.code === targetLang) || c.translations?.[0];
         const displayTitle = match?.title || canonical.titles[targetLang] || canonical.titles['en'] || c.slug;
 
+        // Dynamic subcategory count across direct children and nested category items
+        let count = 0;
+        try {
+          const childCats = await this.prisma.contentCategory.findMany({
+            where: { parentId: c.id, isArchived: false },
+            select: { id: true }
+          });
+          const allFamilyIds = [c.id, ...childCats.map(ch => ch.id)];
+          count = await this.prisma.contentCategory.count({
+            where: { parentId: { in: allFamilyIds }, isArchived: false }
+          });
+        } catch (_) { }
+
         result.push({
           id: c.id,
           slug: c.slug,
           title: displayTitle,
           parentId: c.parentId,
-          order: canonical.order
+          order: canonical.order,
+          subcategoriesCount: count
         });
       }
     }
@@ -1010,7 +1024,8 @@ export class AdminController {
             slug: mKey,
             title: info.titles[targetLang] || info.titles['en'] || mKey,
             parentId: null,
-            order: info.order
+            order: info.order,
+            subcategoriesCount: 0
           });
         }
       }
@@ -1036,66 +1051,47 @@ export class AdminController {
     let targetParentCondition: any = { not: null };
 
     if (parentId && parentId !== 'all') {
-      const parsed = parseInt(parentId, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        targetParentCondition = parsed;
-      } else {
-        try {
-          let parentMatch: any = null;
-          const cleanPid = parentId.toLowerCase().trim();
-          if (cleanPid === 'pooja' || cleanPid === 'pooja-vidhanam' || cleanPid === 'poojalu-vrathaalu' || cleanPid === '113') {
-            parentMatch = await this.prisma.contentCategory.findFirst({
-              where: {
-                OR: [
-                  { id: 113 },
-                  { slug: 'pooja-vidhanam' }
-                ],
-                parentId: null
-              }
-            });
-            if (!parentMatch) {
-              parentMatch = await this.prisma.contentCategory.findFirst({
-                where: {
-                  OR: [
-                    { slug: 'poojalu-vrathaalu' },
-                    { slug: 'pooja' }
-                  ],
-                  parentId: null
-                }
-              });
-            }
-          } else if (cleanPid === 'stotras' || cleanPid === 'divine-stotras' || cleanPid === '114' || cleanPid === '4') {
-            parentMatch = await this.prisma.contentCategory.findFirst({
-              where: {
-                OR: [
-                  { id: 114 },
-                  { slug: 'stotras' },
-                  { id: 4 },
-                  { slug: 'divine-stotras' },
-                  { slug: 'stotramulu' }
-                ],
-                parentId: null
-              }
-            });
-          } else {
-            parentMatch = await this.prisma.contentCategory.findFirst({
-              where: {
-                OR: [
-                  { slug: parentId },
-                  { slug: cleanPid }
-                ],
-                parentId: null
-              }
-            });
-          }
-          if (parentMatch) {
-            targetParentCondition = parentMatch.id;
-          } else {
-            targetParentCondition = -999999;
-          }
-        } catch (_) {
+      try {
+        let parentMatch: any = null;
+        const cleanPid = String(parentId).toLowerCase().trim();
+        const parsed = parseInt(cleanPid, 10);
+
+        if (cleanPid === 'pooja' || cleanPid === 'pooja-vidhanam' || cleanPid === 'poojalu-vrathaalu' || cleanPid === '113') {
+          parentMatch = await this.prisma.contentCategory.findFirst({
+            where: { OR: [{ id: 113 }, { slug: 'pooja-vidhanam' }, { slug: 'pooja' }], parentId: null }
+          });
+        } else if (cleanPid === 'stotras' || cleanPid === 'divine-stotras' || cleanPid === '114' || cleanPid === '4') {
+          parentMatch = await this.prisma.contentCategory.findFirst({
+            where: { OR: [{ id: 114 }, { slug: 'stotras' }, { slug: 'divine-stotras' }, { id: 4 }], parentId: null }
+          });
+        } else if (cleanPid === 'slokas' || cleanPid === 'daily-slokas' || cleanPid === '115') {
+          parentMatch = await this.prisma.contentCategory.findFirst({
+            where: { OR: [{ id: 115 }, { slug: 'slokas' }, { slug: 'daily-slokas' }], parentId: null }
+          });
+        } else if (cleanPid === 'songs' || cleanPid === 'bhajans' || cleanPid === '116') {
+          parentMatch = await this.prisma.contentCategory.findFirst({
+            where: { OR: [{ id: 116 }, { slug: 'songs' }, { slug: 'bhajans' }], parentId: null }
+          });
+        } else if (!isNaN(parsed) && parsed > 0) {
+          parentMatch = await this.prisma.contentCategory.findUnique({ where: { id: parsed } });
+        } else {
+          parentMatch = await this.prisma.contentCategory.findFirst({
+            where: { OR: [{ slug: parentId }, { slug: cleanPid }] }
+          });
+        }
+
+        if (parentMatch) {
+          const childCats = await this.prisma.contentCategory.findMany({
+            where: { parentId: parentMatch.id, isArchived: false },
+            select: { id: true }
+          });
+          const allFamilyIds = [parentMatch.id, ...childCats.map(c => c.id)];
+          targetParentCondition = { in: allFamilyIds };
+        } else {
           targetParentCondition = -999999;
         }
+      } catch (_) {
+        targetParentCondition = -999999;
       }
     }
 
