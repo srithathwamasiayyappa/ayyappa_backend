@@ -3124,7 +3124,14 @@ export class AdminController {
   // =========================================================
 
   @Get('category-services')
-  async getCategoryServices() {
+  async getCategoryServices(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+  ) {
+    let allItems: any[] = [];
+
     // 1. Query dedicated category_services table from MySQL DB
     try {
       if ((this.prisma as any).categoryService) {
@@ -3132,21 +3139,17 @@ export class AdminController {
           orderBy: { displayOrder: 'asc' }
         });
         if (items && items.length > 0) {
-          return {
-            success: true,
-            total: items.length,
-            data: items.map((item: any) => ({
-              id: item.serviceId,
-              serviceId: item.serviceId,
-              title: item.title,
-              sub: item.sub || '',
-              icon: item.icon,
-              url: item.url,
-              artwork: item.artwork || '',
-              displayOrder: item.displayOrder,
-              isActive: item.isActive ?? true
-            }))
-          };
+          allItems = items.map((item: any) => ({
+            id: item.serviceId,
+            serviceId: item.serviceId,
+            title: item.title,
+            sub: item.sub || '',
+            icon: item.icon,
+            url: item.url,
+            artwork: item.artwork || '',
+            displayOrder: item.displayOrder,
+            isActive: item.isActive ?? true
+          }));
         }
       }
     } catch (err: any) {
@@ -3154,59 +3157,94 @@ export class AdminController {
     }
 
     // 2. Query dynamic app_settings for category_services in MySQL DB
-    try {
-      const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
-      if (setting && setting.value) {
-        const parsed = JSON.parse(setting.value);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return {
-            success: true,
-            total: parsed.length,
-            data: parsed
-          };
+    if (allItems.length === 0) {
+      try {
+        const setting = await this.prisma.appSetting.findUnique({ where: { key: 'category_services' } });
+        if (setting && setting.value) {
+          const parsed = JSON.parse(setting.value);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            allItems = parsed;
+          }
         }
+      } catch (err: any) {
+        console.warn('[Admin] app_settings query notice:', err?.message || err);
       }
-    } catch (err: any) {
-      console.warn('[Admin] app_settings query notice:', err?.message || err);
     }
 
     // 3. Fallback to Root Categories from content_categories table in DB
-    try {
-      const rootCats = await this.prisma.contentCategory.findMany({
-        where: { parentId: null, isArchived: false },
-        orderBy: { displayOrder: 'asc' },
-        include: { translations: true }
-      });
-      if (rootCats && rootCats.length > 0) {
-        const mapped = rootCats.map(cat => {
-          const trans = cat.translations?.[0];
-          return {
-            id: cat.slug,
-            serviceId: cat.slug,
-            title: trans?.title || cat.slug,
-            sub: trans?.description || '',
-            icon: 'Sparkles',
-            url: '/subcategories',
-            artwork: `/images/categories/art-${cat.slug}-trans.png`,
-            displayOrder: cat.displayOrder,
-            isActive: true
-          };
+    if (allItems.length === 0) {
+      try {
+        const rootCats = await this.prisma.contentCategory.findMany({
+          where: { parentId: null, isArchived: false },
+          orderBy: { displayOrder: 'asc' },
+          include: { translations: true }
         });
-        return {
-          success: true,
-          total: mapped.length,
-          data: mapped
-        };
+        if (rootCats && rootCats.length > 0) {
+          allItems = rootCats.map(cat => {
+            const trans = cat.translations?.[0];
+            return {
+              id: cat.slug,
+              serviceId: cat.slug,
+              title: trans?.title || cat.slug,
+              sub: trans?.description || '',
+              icon: 'Sparkles',
+              url: '/subcategories',
+              artwork: `/images/categories/art-${cat.slug}-trans.png`,
+              displayOrder: cat.displayOrder,
+              isActive: true
+            };
+          });
+        }
+      } catch (err: any) {
+        console.warn('[Admin] content_categories fallback notice:', err?.message || err);
       }
-    } catch (err: any) {
-      console.warn('[Admin] content_categories fallback notice:', err?.message || err);
     }
 
-    // Zero fallback / mock data: strictly return database result
+    // Server-side filtering: status ('all' | 'active' | 'inactive')
+    let filtered = allItems;
+    if (status && status !== 'all') {
+      if (status === 'active') {
+        filtered = filtered.filter(item => item.isActive !== false);
+      } else if (status === 'inactive') {
+        filtered = filtered.filter(item => item.isActive === false);
+      }
+    }
+
+    // Server-side searching: search by title, sub, serviceId, url
+    if (search && search.trim() !== '') {
+      const q = search.trim().toLowerCase();
+      filtered = filtered.filter(item => {
+        const matchTitle = item.title?.toLowerCase().includes(q);
+        const matchSub = item.sub?.toLowerCase().includes(q);
+        const matchId = (item.serviceId || item.id)?.toLowerCase().includes(q);
+        const matchUrl = item.url?.toLowerCase().includes(q);
+        return matchTitle || matchSub || matchId || matchUrl;
+      });
+    }
+
+    const totalCount = filtered.length;
+
+    // Server-side pagination
+    const pageNum = page ? Math.max(1, parseInt(page, 10) || 1) : 1;
+    const limitNum = limit ? Math.max(1, parseInt(limit, 10) || 10) : (page ? 10 : (totalCount || 10));
+    const totalPages = Math.ceil(totalCount / limitNum) || 1;
+
+    let pagedData = filtered;
+    if (page || limit) {
+      const startIndex = (pageNum - 1) * limitNum;
+      pagedData = filtered.slice(startIndex, startIndex + limitNum);
+    }
+
     return {
       success: true,
-      total: 0,
-      data: []
+      total: totalCount,
+      data: pagedData,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        totalRecords: totalCount,
+        totalPages: totalPages
+      }
     };
   }
 

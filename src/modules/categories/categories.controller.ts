@@ -205,11 +205,18 @@ export class CategoriesController {
     };
   }
 
-  // 1. Devotional Services & Categories Endpoint (Direct from MySQL with server-side search and multi-language support)
+  // 1. Devotional Services & Categories Endpoint (Direct from MySQL with server-side search, status filter, pagination and multi-language support)
   @Get('services')
-  async getCategoryServices(@Query('search') search?: string, @Query('lang') lang?: string) {
+  async getCategoryServices(
+    @Query('search') search?: string,
+    @Query('lang') lang?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
     const q = search && search.trim() !== '' ? search.trim().toLowerCase() : null;
     const targetLang = (lang || 'en').toLowerCase().trim();
+    let allItems: any[] = [];
 
     // Load category translations from content_categories table in DB
     let dbCategoryTranslations: Record<string, { title: string; desc: string }> = {};
@@ -305,11 +312,7 @@ export class CategoriesController {
           }
 
           if (mapped.length > 0) {
-            return {
-              success: true,
-              data: mapped,
-              count: mapped.length,
-            };
+            allItems = mapped;
           }
         }
       }
@@ -333,11 +336,7 @@ export class CategoriesController {
               (s.serviceId && s.serviceId.toLowerCase().includes(q))
             );
           }
-          return {
-            success: true,
-            data: filtered,
-            count: filtered.length,
-          };
+          allItems = filtered;
         }
       }
     } catch (err: any) {
@@ -367,20 +366,44 @@ export class CategoriesController {
             isActive: true,
           };
         });
-        return {
-          success: true,
-          data: mapped,
-          count: mapped.length,
-        };
+        allItems = mapped;
       }
     } catch (err: any) {
       console.warn('[Categories] content_categories fallback notice:', err?.message || err);
     }
 
+    // Apply status filter if provided
+    let finalItems = allItems;
+    if (status && status !== 'all') {
+      if (status === 'active') {
+        finalItems = finalItems.filter((i: any) => i.isActive !== false);
+      } else if (status === 'inactive') {
+        finalItems = finalItems.filter((i: any) => i.isActive === false);
+      }
+    }
+
+    const totalCount = finalItems.length;
+    const pageNum = page ? Math.max(1, parseInt(page, 10) || 1) : 1;
+    const limitNum = limit ? Math.max(1, parseInt(limit, 10) || 10) : (page ? 10 : (totalCount || 10));
+    const totalPages = Math.ceil(totalCount / limitNum) || 1;
+
+    let pagedData = finalItems;
+    if (page || limit) {
+      const startIndex = (pageNum - 1) * limitNum;
+      pagedData = finalItems.slice(startIndex, startIndex + limitNum);
+    }
+
     return {
       success: true,
-      data: [],
-      count: 0,
+      data: pagedData,
+      count: pagedData.length,
+      total: totalCount,
+      meta: {
+        page: pageNum,
+        limit: limitNum,
+        totalRecords: totalCount,
+        totalPages: totalPages
+      }
     };
   }
 
