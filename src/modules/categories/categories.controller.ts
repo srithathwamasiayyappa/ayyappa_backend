@@ -752,12 +752,21 @@ export class CategoriesController {
       const deityResolved = this.resolveDeityFromDb(rawSlug, finalTitle, dbDeities);
       const resolvedImage = customImages[String(category.id)] || customImages[rawSlug] || null;
 
-      const fullScriptureText = preferred?.description || '';
+      const prefDesc = preferred?.description || '';
+      const teDesc = teTranslation?.description || '';
+      const enDesc = enTranslation?.description || '';
+
+      // If preferred description is short (< 150 chars) and Telugu has full lyrics/scripture, use the rich Telugu lyrics
+      let fullScriptureText = prefDesc;
+      if ((!prefDesc || prefDesc.length < 150) && teDesc && teDesc.length >= 150) {
+        fullScriptureText = teDesc;
+      }
 
       // Extract instruction note if present in DB text
       let instructionNote = '';
-      if (fullScriptureText.includes('సూచన :') || fullScriptureText.includes('సూచన:')) {
-        const parts = fullScriptureText.split(/\n\s*\n/);
+      const checkText = fullScriptureText || teDesc;
+      if (checkText.includes('సూచన :') || checkText.includes('సూచన:')) {
+        const parts = checkText.split(/\n\s*\n/);
         instructionNote = parts[0].replace(/^సూచన\s*:\s*/, '').trim();
       }
 
@@ -843,9 +852,13 @@ export class CategoriesController {
           title: finalTitle,
           titleTelugu: finalTeTitle,
           titleEnglish: finalEnTitle,
-          subtitle: preferred?.description?.split('\n')[0]?.slice(0, 150) || '',
+          subtitle: (prefDesc || teDesc)?.split('\n')[0]?.slice(0, 150) || '',
           overview: fullScriptureText,
+          description: fullScriptureText,
           fullScriptureText,
+          lyrics: teDesc || fullScriptureText,
+          descriptionTelugu: teDesc,
+          descriptionEnglish: enDesc,
           instructionNote,
           heroImage: resolvedImage,
           badge: '',
