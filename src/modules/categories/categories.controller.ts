@@ -503,7 +503,11 @@ export class CategoriesController {
           targetParentIds = [parsed];
         } else {
           const lower = parentKey.toLowerCase().trim();
-          const cleanKey = lower.replace(/-vidhanam$/, '').replace(/-services$/, '').replace(/-songs$/, '');
+          const cleanKey = lower
+            .replace(/^daily-/, '')
+            .replace(/-vidhanam$/, '')
+            .replace(/-services$/, '')
+            .replace(/-songs$/, '');
           try {
             const matches = await this.prisma.contentCategory.findMany({
               where: {
@@ -511,9 +515,12 @@ export class CategoriesController {
                 OR: [
                   { slug: parentKey },
                   { slug: lower },
+                  { slug: cleanKey },
                   { slug: { contains: cleanKey } },
                   { translations: { some: { title: { contains: parentKey } } } },
                   { translations: { some: { title: { contains: cleanKey } } } },
+                  ...(lower === 'daily-slokas' || lower.includes('sloka') ? [{ slug: 'slokas' }, { id: 115 }] : []),
+                  ...(lower === 'songs' || lower === 'bhajans' || lower.includes('bhajan') ? [{ slug: 'harathis' }, { id: 116 }] : []),
                 ],
               },
               select: { id: true },
@@ -619,8 +626,14 @@ export class CategoriesController {
             const pSlug = (item.parentSlug || '').toLowerCase();
             const pTitle = (item.parentTitle || '').toLowerCase();
 
-            // Universal all-deity daily slokas (like Nithya Paarayana) appear under all deity filters
-            const isUniversal = itemSlug.includes('nithya-paarayana') || itemD === 'all' || itemSlug === 'nithya-paarayana-shlokamulu';
+            // Universal all-deity daily slokas (like Morning, Meal, Night Prayers, Nithya Paarayana)
+            const isUniversal =
+              itemSlug.includes('nithya-paarayana') ||
+              itemSlug.includes('morning-prayers') ||
+              itemSlug.includes('meal-prayers') ||
+              itemSlug.includes('night-prayers') ||
+              itemD === 'all' ||
+              itemSlug === 'nithya-paarayana-shlokamulu';
 
             return (
               isUniversal ||
@@ -629,13 +642,13 @@ export class CategoriesController {
               itemTitle.includes(normDeity) ||
               pSlug.includes(normDeity) ||
               pTitle.includes(normDeity) ||
-              (normDeity === 'ayyappa' && (itemSlug.includes('poorvaang') || itemTitle.includes('పూర్వాంగ') || itemSlug.includes('maaladharan') || itemTitle.includes('మాలాధారణ') || itemSlug.includes('ayyap') || itemTitle.includes('అయ్యప్ప') || itemSlug.includes('harivarasanam') || itemTitle.includes('హరివరాసనం') || itemSlug.includes('padi') || itemTitle.includes('పడి') || itemD === 'ayyappa')) ||
+              (normDeity === 'ayyappa' && (itemSlug.includes('poorvaang') || itemTitle.includes('పూర్వాంగ') || itemSlug.includes('maaladharan') || itemTitle.includes('మాలాధారణ') || itemSlug.includes('ayyap') || itemTitle.includes('అయ్యప్ప') || itemSlug.includes('harivarasanam') || itemTitle.includes('హరివరాసనం') || itemSlug.includes('padi') || itemTitle.includes('పడి') || itemSlug.includes('sastha') || itemTitle.includes('శాస్త') || itemSlug.includes('suprabatham') || itemTitle.includes('సుప్రభాతం') || itemD === 'ayyappa')) ||
               ((normDeity === 'vishnu' || normDeity === 'venkateswara') && (itemD === 'venkateswara' || itemSlug.includes('satyanarayana') || itemTitle.includes('సత్యనారాయణ') || itemSlug.includes('venkat') || itemTitle.includes('వేంకట') || itemSlug.includes('suprabhat') || itemSlug.includes('guruvayoor') || itemTitle.includes('గురువాయూరప్ప') || itemSlug.includes('tulasi') || itemTitle.includes('తులసి'))) ||
               (normDeity === 'ganesha' && (itemD === 'ganesha' || itemSlug.includes('vinayak') || itemTitle.includes('వినాయక') || itemSlug.includes('ganapathi') || itemTitle.includes('గణపతి') || itemSlug.includes('pancharatnam') || itemSlug.includes('vignesh') || itemSlug.includes('vighnesh') || itemTitle.includes('విఘ్నేశ్వర') || itemTitle.includes('మహాగణపతి') || itemSlug.includes('mahaganapathi'))) ||
               (normDeity === 'devi' && (itemD === 'devi' || itemSlug.includes('varalakshmi') || itemTitle.includes('వరలక్ష్మి') || itemSlug.includes('lakshmi') || itemTitle.includes('లక్ష్మి') || itemSlug.includes('devi') || itemTitle.includes('దేవి') || itemSlug.includes('karagre') || itemSlug.includes('dandaal') || itemTitle.includes('దండాల') || itemSlug.includes('akhiland') || itemTitle.includes('అఖిలాండ') || itemSlug.includes('amba') || itemTitle.includes('అంబ'))) ||
               (normDeity === 'shiva' && (itemD === 'shiva' || itemSlug.includes('kedar') || itemTitle.includes('కేదార') || itemSlug.includes('rudra') || itemTitle.includes('రుద్ర') || itemSlug.includes('shiva') || itemTitle.includes('శివ') || itemSlug.includes('linga') || itemSlug.includes('tandava') || itemSlug.includes('umamaheshwara') || itemTitle.includes('ఉమామహేశ్వర'))) ||
               (normDeity === 'hanuman' && (itemD === 'hanuman' || itemSlug.includes('hanuman') || itemTitle.includes('హనుమాన్') || itemSlug.includes('chalisa') || itemSlug.includes('anjaneya') || itemTitle.includes('ఆంజనేయ'))) ||
-              (normDeity === 'murugan' && (itemD === 'murugan' || itemSlug.includes('murugan') || itemSlug.includes('subrahmanya') || itemSlug.includes('subramanya') || itemTitle.includes('సుబ్రహ్మణ్య') || itemSlug.includes('kartikeya') || itemTitle.includes('కార్తికేయ') || itemSlug.includes('pazhani') || itemSlug.includes('palani') || itemTitle.includes('పళని') || itemSlug.includes('udipi') || itemTitle.includes('ఉడిపి')))
+              (normDeity === 'murugan' && (itemD === 'murugan' || itemSlug.includes('murugan') || itemSlug.includes('subrahmanya') || itemSlug.includes('subramanya') || itemTitle.includes('సుబ్రహ్మణ్య') || itemSlug.includes('kanda') || itemSlug.includes('sashti') || itemTitle.includes('స్కంద') || itemTitle.includes('షష్ఠి') || itemSlug.includes('kartikeya') || itemTitle.includes('కార్తికేయ') || itemSlug.includes('pazhani') || itemSlug.includes('palani') || itemTitle.includes('పళని') || itemSlug.includes('udipi') || itemTitle.includes('ఉడిపి')))
             );
           });
         }
