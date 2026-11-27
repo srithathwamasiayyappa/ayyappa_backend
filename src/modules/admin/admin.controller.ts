@@ -772,6 +772,24 @@ export class AdminController {
       } catch (_) {}
     }
 
+    if ((body as any).status) {
+      try {
+        const statusSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_statuses' } });
+        let map: Record<string, string> = {};
+        if (statusSetting && statusSetting.value) {
+          try { map = JSON.parse(statusSetting.value); } catch {}
+        }
+        const cleanStatus = ['active', 'coming_soon', 'inactive'].includes((body as any).status) ? (body as any).status : 'active';
+        map[String(created.id)] = cleanStatus;
+        map[created.slug] = cleanStatus;
+        await this.prisma.appSetting.upsert({
+          where: { key: 'subcategory_statuses' },
+          update: { value: JSON.stringify(map) },
+          create: { key: 'subcategory_statuses', value: JSON.stringify(map), description: 'Subcategory Statuses Map' }
+        });
+      } catch (_) {}
+    }
+
     return { success: true, data: { id: String(created.id), ...body } };
   }
 
@@ -836,6 +854,27 @@ export class AdminController {
         });
       } catch (err) {
         console.warn('Could not save subcategory deity association:', err);
+      }
+    }
+
+    if (body.status !== undefined && body.status !== null) {
+      try {
+        const statusSetting = await this.prisma.appSetting.findUnique({ where: { key: 'subcategory_statuses' } });
+        let map: Record<string, string> = {};
+        if (statusSetting && statusSetting.value) {
+          try { map = JSON.parse(statusSetting.value); } catch {}
+        }
+        const cleanStatus = ['active', 'coming_soon', 'inactive'].includes(body.status) ? body.status : 'active';
+        map[String(numId)] = cleanStatus;
+        map[existing.slug] = cleanStatus;
+        if (body.slug && body.slug !== existing.slug) map[body.slug] = cleanStatus;
+        await this.prisma.appSetting.upsert({
+          where: { key: 'subcategory_statuses' },
+          update: { value: JSON.stringify(map) },
+          create: { key: 'subcategory_statuses', value: JSON.stringify(map), description: 'Subcategory Statuses Map' }
+        });
+      } catch (err) {
+        console.warn('Could not save subcategory status:', err);
       }
     }
 
@@ -1041,7 +1080,8 @@ export class AdminController {
     @Query('limit') limit: string = '100',
     @Query('search') search?: string,
     @Query('lang') lang: string = 'te',
-    @Query('parentId') parentId?: string
+    @Query('parentId') parentId?: string,
+    @Query('status') status?: string
   ) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const take = Math.min(200, Math.max(1, parseInt(limit, 10) || 100));
@@ -1133,22 +1173,26 @@ export class AdminController {
     if (items.length > 0) {
       let customImages: Record<string, string> = {};
       let customDeities: Record<string, string> = {};
+      let customStatuses: Record<string, string> = {};
       try {
-        const [imgSetting, deitySetting] = await Promise.all([
+        const [imgSetting, deitySetting, statusSetting] = await Promise.all([
           this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } }),
-          this.prisma.appSetting.findUnique({ where: { key: 'subcategory_deities' } })
+          this.prisma.appSetting.findUnique({ where: { key: 'subcategory_deities' } }),
+          this.prisma.appSetting.findUnique({ where: { key: 'subcategory_statuses' } })
         ]);
         if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
         if (deitySetting && deitySetting.value) customDeities = JSON.parse(deitySetting.value);
+        if (statusSetting && statusSetting.value) customStatuses = JSON.parse(statusSetting.value);
       } catch (_) {}
 
       const totalPages = Math.ceil(totalRecords / take);
-      const formatted = items.map(cat => {
+      let formatted = items.map(cat => {
         const preferred = cat.translations.find((t: any) => t.language?.code === lang) || cat.translations[0];
         const parentPref = cat.parent?.translations?.find((t: any) => t.languageId === preferred?.languageId) || cat.parent?.translations?.[0];
         const pSlug = cat.parent?.slug || 'pooja';
         const customImg = customImages[String(cat.id)] || customImages[cat.slug];
         const deityId = customDeities[String(cat.id)] || customDeities[cat.slug] || 'ayyappa';
+        const subStatus = customStatuses[String(cat.id)] || customStatuses[cat.slug] || 'active';
 
         // Format clean title if not in DB translations
         const titleFormatted = cat.slug
@@ -1170,19 +1214,25 @@ export class AdminController {
           displayOrder: cat.displayOrder,
           isAudio: cat.isAudio,
           deityId,
+          status: subStatus,
+          isActive: subStatus === 'active',
           imageUrl: customImg || resolveCategoryCardArtwork(cat.slug, finalTitle, pSlug, cat.displayOrder),
           image: customImg || resolveCategoryCardArtwork(cat.slug, finalTitle, pSlug, cat.displayOrder),
           createdAt: cat.createdAt
         };
       });
 
+      if (status && status !== 'all') {
+        formatted = formatted.filter(s => s.status === status);
+      }
+
       return {
         data: formatted,
         meta: {
           page: pageNum,
           limit: take,
-          totalRecords,
-          totalPages,
+          totalRecords: (status && status !== 'all') ? formatted.length : totalRecords,
+          totalPages: (status && status !== 'all') ? Math.ceil(formatted.length / take) : totalPages,
           hasNextPage: pageNum < totalPages,
           hasPreviousPage: pageNum > 1
         }
@@ -1214,13 +1264,19 @@ export class AdminController {
 
     let customImages: Record<string, string> = {};
     let customDeities: Record<string, string> = {};
+    let customStatuses: Record<string, string> = {};
+    let typeStatuses: Record<string, string> = {};
     try {
-      const [imgSetting, deitySetting] = await Promise.all([
+      const [imgSetting, deitySetting, statusSetting, typeStatusSetting] = await Promise.all([
         this.prisma.appSetting.findUnique({ where: { key: 'subcategory_images' } }),
-        this.prisma.appSetting.findUnique({ where: { key: 'subcategory_deities' } })
+        this.prisma.appSetting.findUnique({ where: { key: 'subcategory_deities' } }),
+        this.prisma.appSetting.findUnique({ where: { key: 'subcategory_statuses' } }),
+        this.prisma.appSetting.findUnique({ where: { key: 'type_statuses' } })
       ]);
       if (imgSetting && imgSetting.value) customImages = JSON.parse(imgSetting.value);
       if (deitySetting && deitySetting.value) customDeities = JSON.parse(deitySetting.value);
+      if (statusSetting && statusSetting.value) customStatuses = JSON.parse(statusSetting.value);
+      if (typeStatusSetting && typeStatusSetting.value) typeStatuses = JSON.parse(typeStatusSetting.value);
     } catch (_) {}
 
     try {
@@ -1238,7 +1294,6 @@ export class AdminController {
             include: { language: true }
           },
           devotionalContents: {
-            where: { isPublished: true },
             orderBy: { displayOrder: 'asc' }
           },
           subcategories: {
@@ -1284,6 +1339,7 @@ export class AdminController {
 
         const contents = cat.devotionalContents.map((d: any) => {
           const loc = contentSettingMap.get(`devotional_content_${d.id}_${lang.toLowerCase()}`);
+          const cStatus = typeStatuses[String(d.id)] || (d.isPublished !== false ? 'active' : 'inactive');
           return {
             id: d.id,
             title: loc?.title || d.title,
@@ -1291,6 +1347,8 @@ export class AdminController {
             sacredText: loc?.sacredText || d.sacredText || null,
             meaning: loc?.meaning || d.meaning || null,
             displayOrder: d.displayOrder,
+            status: cStatus,
+            isPublished: cStatus === 'active',
             hasExactTranslation: Boolean(loc)
           };
         });
@@ -1304,6 +1362,8 @@ export class AdminController {
             description: subPref ? subPref.description : null
           };
         });
+
+        const catStatus = customStatuses[String(cat.id)] || customStatuses[cat.slug] || 'active';
 
         return {
           success: true,
@@ -1322,6 +1382,8 @@ export class AdminController {
             displayOrder: cat.displayOrder,
             isAudio: cat.isAudio,
             isSubcategory: Boolean(cat.parentId),
+            status: catStatus,
+            isActive: catStatus === 'active',
             deityId: customDeities[String(cat.id)] || customDeities[cat.slug] || 'ayyappa',
             imageUrl: customImg || resolveCategoryCardArtwork(cat.slug, preferred ? preferred.title : cat.slug, pSlug, cat.displayOrder),
             image: customImg || resolveCategoryCardArtwork(cat.slug, preferred ? preferred.title : cat.slug, pSlug, cat.displayOrder),
@@ -1346,7 +1408,8 @@ export class AdminController {
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '20',
     @Query('search') search?: string,
-    @Query('categoryId') categoryId?: string
+    @Query('categoryId') categoryId?: string,
+    @Query('status') status?: string
   ) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
@@ -1362,7 +1425,7 @@ export class AdminController {
     }
 
     try {
-      const [totalRecords, items] = await Promise.all([
+      const [totalRecords, items, typeStatusSetting] = await Promise.all([
         this.prisma.devotionalContent.count({ where }),
         this.prisma.devotionalContent.findMany({
           where,
@@ -1370,16 +1433,35 @@ export class AdminController {
           take,
           orderBy: { displayOrder: 'asc' },
           include: { category: true }
-        })
+        }),
+        this.prisma.appSetting.findUnique({ where: { key: 'type_statuses' } })
       ]);
 
+      let typeStatuses: Record<string, string> = {};
+      if (typeStatusSetting && typeStatusSetting.value) {
+        try { typeStatuses = JSON.parse(typeStatusSetting.value); } catch {}
+      }
+
+      let formatted = items.map((i: any) => {
+        const itemStatus = typeStatuses[String(i.id)] || (i.isPublished !== false ? 'active' : 'inactive');
+        return {
+          ...i,
+          status: itemStatus,
+          isPublished: itemStatus === 'active'
+        };
+      });
+
+      if (status && status !== 'all') {
+        formatted = formatted.filter((i: any) => i.status === status);
+      }
+
       return {
-        data: items,
+        data: formatted,
         meta: {
           page: pageNum,
           limit: take,
-          totalRecords,
-          totalPages: Math.ceil(totalRecords / take),
+          totalRecords: (status && status !== 'all') ? formatted.length : totalRecords,
+          totalPages: (status && status !== 'all') ? Math.ceil(formatted.length / take) : Math.ceil(totalRecords / take),
           hasNextPage: pageNum < Math.ceil(totalRecords / take),
           hasPreviousPage: pageNum > 1
         }
@@ -1431,6 +1513,12 @@ export class AdminController {
       throw new NotFoundException(`Devotional content #${id} not found.`);
     }
 
+    let typeStatuses: Record<string, string> = {};
+    try {
+      const typeStatusSetting = await this.prisma.appSetting.findUnique({ where: { key: 'type_statuses' } });
+      if (typeStatusSetting && typeStatusSetting.value) typeStatuses = JSON.parse(typeStatusSetting.value);
+    } catch {}
+
     // Check localized translations from appSetting for requested lang
     let locSetting: any = null;
     try {
@@ -1458,6 +1546,8 @@ export class AdminController {
       } catch {}
     }
 
+    const itemStatus = typeStatuses[String(item.id)] || (item.isPublished !== false ? 'active' : 'inactive');
+
     return {
       success: true,
       data: {
@@ -1474,7 +1564,8 @@ export class AdminController {
         requestedLang: lang,
         translations: contentTranslations,
         displayOrder: item.displayOrder,
-        isPublished: item.isPublished,
+        status: itemStatus,
+        isPublished: itemStatus === 'active',
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
         category: item.category ? {
@@ -1496,7 +1587,8 @@ export class AdminController {
   }
 
   @Post('content')
-  async createDevotionalContent(@Body() body: { categoryId: number; title: string; slug: string; sacredText?: string; meaning?: string; displayOrder?: number; isPublished?: boolean; lang?: string }) {
+  async createDevotionalContent(@Body() body: { categoryId: number; title: string; slug: string; sacredText?: string; meaning?: string; displayOrder?: number; isPublished?: boolean; status?: string; lang?: string }) {
+    const statusVal = body.status || (body.isPublished !== false ? 'active' : 'inactive');
     const created = await this.prisma.devotionalContent.create({
       data: {
         categoryId: Number(body.categoryId),
@@ -1505,9 +1597,25 @@ export class AdminController {
         sacredText: body.sacredText || '',
         meaning: body.meaning || '',
         displayOrder: body.displayOrder !== undefined ? Number(body.displayOrder) : 0,
-        isPublished: body.isPublished !== undefined ? Boolean(body.isPublished) : true
+        isPublished: statusVal === 'active'
       }
     });
+
+    if (body.status !== undefined) {
+      try {
+        const typeStatusSetting = await this.prisma.appSetting.findUnique({ where: { key: 'type_statuses' } });
+        let map: Record<string, string> = {};
+        if (typeStatusSetting && typeStatusSetting.value) {
+          try { map = JSON.parse(typeStatusSetting.value); } catch {}
+        }
+        map[String(created.id)] = body.status;
+        await this.prisma.appSetting.upsert({
+          where: { key: 'type_statuses' },
+          update: { value: JSON.stringify(map) },
+          create: { key: 'type_statuses', value: JSON.stringify(map), description: 'Subcategory Type Statuses Map' }
+        });
+      } catch (_) {}
+    }
 
     if (body.lang) {
       const contentKey = `devotional_content_${created.id}_${String(body.lang).toLowerCase()}`;
@@ -1533,12 +1641,15 @@ export class AdminController {
       });
     }
 
-    return { success: true, data: created };
+    return { success: true, data: { ...created, status: statusVal } };
   }
 
   @Put('content/:id')
   async updateDevotionalContent(@Param('id') id: string, @Body() body: any) {
     const numId = parseInt(id, 10);
+    const statusVal = body.status !== undefined ? body.status : (body.isPublished !== undefined ? (body.isPublished ? 'active' : 'inactive') : undefined);
+    const isPubVal = statusVal !== undefined ? (statusVal === 'active') : (body.isPublished !== undefined ? Boolean(body.isPublished) : undefined);
+
     const updated = await this.prisma.devotionalContent.update({
       where: { id: numId },
       data: {
@@ -1547,9 +1658,25 @@ export class AdminController {
         sacredText: body.sacredText,
         meaning: body.meaning,
         displayOrder: body.displayOrder !== undefined ? Number(body.displayOrder) : undefined,
-        isPublished: body.isPublished !== undefined ? Boolean(body.isPublished) : undefined
+        isPublished: isPubVal
       }
     });
+
+    if (body.status !== undefined) {
+      try {
+        const typeStatusSetting = await this.prisma.appSetting.findUnique({ where: { key: 'type_statuses' } });
+        let map: Record<string, string> = {};
+        if (typeStatusSetting && typeStatusSetting.value) {
+          try { map = JSON.parse(typeStatusSetting.value); } catch {}
+        }
+        map[String(numId)] = body.status;
+        await this.prisma.appSetting.upsert({
+          where: { key: 'type_statuses' },
+          update: { value: JSON.stringify(map) },
+          create: { key: 'type_statuses', value: JSON.stringify(map), description: 'Subcategory Type Statuses Map' }
+        });
+      } catch (_) {}
+    }
 
     if (body.lang) {
       const contentKey = `devotional_content_${numId}_${String(body.lang).toLowerCase()}`;
@@ -3146,7 +3273,8 @@ export class AdminController {
             url: item.url,
             artwork: item.artwork || '',
             displayOrder: item.displayOrder,
-            isActive: item.isActive ?? true
+            status: item.status || (item.isActive !== false ? 'active' : 'inactive'),
+            isActive: item.status ? item.status === 'active' : (item.isActive ?? true)
           }));
         }
       }
@@ -3161,7 +3289,11 @@ export class AdminController {
         if (setting && setting.value) {
           const parsed = JSON.parse(setting.value);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            allItems = parsed;
+            allItems = parsed.map((item: any) => ({
+              ...item,
+              status: item.status || (item.isActive !== false ? 'active' : 'inactive'),
+              isActive: item.status ? item.status === 'active' : (item.isActive ?? true)
+            }));
           }
         }
       } catch (err: any) {
@@ -3188,6 +3320,7 @@ export class AdminController {
               url: '/subcategories',
               artwork: `/images/categories/art-${cat.slug}-trans.png`,
               displayOrder: cat.displayOrder,
+              status: 'active',
               isActive: true
             };
           });
@@ -3258,13 +3391,15 @@ export class AdminController {
       console.warn('[Admin] Failed to compute subcategoriesCount:', e);
     }
 
-    // Server-side filtering: status ('all' | 'active' | 'inactive')
+    // Server-side filtering: status ('all' | 'active' | 'coming_soon' | 'inactive')
     let filtered = allItems;
     if (status && status !== 'all') {
       if (status === 'active') {
-        filtered = filtered.filter(item => item.isActive !== false);
+        filtered = filtered.filter(item => (item.status === 'active' || (!item.status && item.isActive !== false)));
+      } else if (status === 'coming_soon') {
+        filtered = filtered.filter(item => item.status === 'coming_soon');
       } else if (status === 'inactive') {
-        filtered = filtered.filter(item => item.isActive === false);
+        filtered = filtered.filter(item => (item.status === 'inactive' || (!item.status && item.isActive === false)));
       }
     }
 
@@ -3346,6 +3481,7 @@ export class AdminController {
       finalArtwork = this.saveBase64Image(finalArtwork, 'service');
     }
 
+    const statusVal = body.status || (body.isActive !== false ? 'active' : 'inactive');
     const newService: any = {
       id: serviceId,
       serviceId: serviceId,
@@ -3354,7 +3490,8 @@ export class AdminController {
       url: body.url?.trim() || `/${serviceId}`,
       artwork: finalArtwork,
       displayOrder: parseInt(body.displayOrder, 10) || (services.length + 1),
-      isActive: body.isActive !== undefined ? Boolean(body.isActive) : true
+      status: statusVal,
+      isActive: statusVal === 'active'
     };
     delete newService.icon;
     services.push(newService);
@@ -3401,7 +3538,13 @@ export class AdminController {
       services[index].artwork = finalArt;
     }
     if (body.displayOrder !== undefined) services[index].displayOrder = parseInt(body.displayOrder, 10);
-    if (body.isActive !== undefined) services[index].isActive = Boolean(body.isActive);
+    if (body.status !== undefined) {
+      services[index].status = body.status;
+      services[index].isActive = body.status === 'active';
+    } else if (body.isActive !== undefined) {
+      services[index].isActive = Boolean(body.isActive);
+      services[index].status = body.isActive ? 'active' : 'inactive';
+    }
 
     await this.prisma.appSetting.update({
       where: { key: 'category_services' },

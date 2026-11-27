@@ -442,9 +442,11 @@ export class CategoriesController {
 
     if (status && status !== 'all') {
       if (status === 'active') {
-        finalItems = finalItems.filter((i: any) => i.isActive !== false);
+        finalItems = finalItems.filter((i: any) => (i.status === 'active' || (!i.status && i.isActive !== false)));
+      } else if (status === 'coming_soon') {
+        finalItems = finalItems.filter((i: any) => i.status === 'coming_soon');
       } else if (status === 'inactive') {
-        finalItems = finalItems.filter((i: any) => i.isActive === false);
+        finalItems = finalItems.filter((i: any) => (i.status === 'inactive' || (!i.status && i.isActive === false)));
       }
     }
 
